@@ -5,7 +5,7 @@ use core::iter;
 use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
 
 macro_rules! shortening_bitop_fn_body {
-    ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:path, $self_op:ident) => {
+    ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:expr, $self_op:ident) => {
         match ($lhs.representation(), $rhs.representation()) {
             (Representation::SparseInline, Representation::SparseInline) => unsafe {
                 let lhs_flag = $lhs.get_inline_sparse_data_unchecked();
@@ -15,7 +15,7 @@ macro_rules! shortening_bitop_fn_body {
                     // result is still sparse and lhs already has the correct flag set
                 } else {
                     // result is an empty set
-                    *$lhs = Self::new();
+                    *$lhs = Self::empty();
                 }
             },
             (
@@ -35,7 +35,7 @@ macro_rules! shortening_bitop_fn_body {
                     // result is still sparse and lhs already has the correct flag set
                 } else {
                     // result is an empty set
-                    *$lhs = Self::new();
+                    *$lhs = Self::empty();
                 }
             }
             (
@@ -55,18 +55,18 @@ macro_rules! shortening_bitop_fn_body {
                 if $sparse_cond(lhs_flag, rhs_flag) {
                     if lhs_flag == rhs_flag {
                         // result is sparse and lhs needs to be updated
-                        *$lhs = Self::new_flag(rhs_flag);
+                        *$lhs = Self::flag(rhs_flag);
                     } else {
                         // result is not sparse, rhs_flag bit needs to be unset in lhs
-                        $lhs.and_not_assign(&(Self::new_small(1) << rhs_flag));
+                        $lhs.and_not_assign(&(Self::new_inline(1) << rhs_flag));
                     }
                 } else {
                     if lhs_flag != rhs_flag {
                         // result is an empty set
-                        *$lhs = Self::new();
+                        *$lhs = Self::empty();
                     } else {
                         // result is not sparse, rhs_flag bit needs to be unsed in lhs
-                        $lhs.and_not_assign(&(Self::new_small(1) << rhs_flag));
+                        $lhs.and_not_assign(&(Self::new_inline(1) << rhs_flag));
                     }
                 }
             }
@@ -106,7 +106,7 @@ macro_rules! shortening_bitop_fn_body {
 }
 
 macro_rules! extending_bitop_fn_body {
-    ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:path, $self_op:ident) => {
+    ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:expr, $self_op:ident) => {
         match ($lhs.representation(), $rhs.representation()) {
             (Representation::SparseInline, Representation::SparseInline) => unsafe {
                 let lhs_flag = $lhs.get_inline_sparse_data_unchecked();
@@ -123,7 +123,7 @@ macro_rules! extending_bitop_fn_body {
                     }
                 } else {
                     // result is an empty set
-                    *$lhs = Self::new();
+                    *$lhs = Self::empty();
                 }
             },
             (
@@ -181,7 +181,7 @@ macro_rules! extending_bitop_fn_body {
 }
 
 macro_rules! impl_bitop {
-    ($($OP:ident :: $op:ident, $OPA:ident :: $opa:ident, $sparse_comp_closure:expr, $body_macro:path;)+) => {$(
+    ($($OP:ident :: $op:ident, $OPA:ident :: $opa:ident, $sparse_cond:expr, $body_macro:path;)+) => {$(
         impl $OP<Self> for SmolBitSet {
             type Output = Self;
 
@@ -220,11 +220,7 @@ macro_rules! impl_bitop {
                     (*lhs).$opa(rhs);
                 }
 
-                fn sparse_cond(lhs: u32, rhs: u32) -> bool {
-                    $sparse_comp_closure(lhs, rhs)
-                }
-
-                $body_macro!(self, rhs, op, sparse_cond, $opa);
+                $body_macro!(self, rhs, op, $sparse_cond, $opa);
             }
         }
     )*};
@@ -547,8 +543,8 @@ mod tests {
                 ($($name:ident, $op:ident, $a:expr, $b:expr),+) => {$(
                     #[test]
                     fn $name() {
-                        let a = SmolBitSet::new_flag($a);
-                        let b = SmolBitSet::new_flag($b);
+                        let a = SmolBitSet::flag($a);
+                        let b = SmolBitSet::flag($b);
                         assert!(a.is_inline());
                         assert!(b.is_inline());
                         assert!(a.is_sparse());
@@ -611,7 +607,7 @@ mod tests {
                             }
                         }
 
-                        let a = SmolBitSet::new_flag($a);
+                        let a = SmolBitSet::flag($a);
                         let b = SmolBitSet::from($b);
                         assert!(a.is_inline());
                         assert!(a.is_sparse());
@@ -658,7 +654,7 @@ mod tests {
                         }
 
                         let shift = 120;
-                        let a: SmolBitSet = SmolBitSet::new_flag($a) << shift;
+                        let a: SmolBitSet = SmolBitSet::flag($a) << shift;
                         let b: SmolBitSet = SmolBitSet::from($b) << shift;
                         assert!(a.is_inline());
                         assert!(a.is_sparse());

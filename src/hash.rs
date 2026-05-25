@@ -1,9 +1,6 @@
 use crate::{BST_BITS, MAX_INLINE_BITS, SmolBitSet};
 
-#[cfg(not(feature = "std"))]
 use core::hash;
-#[cfg(feature = "std")]
-use std::hash;
 
 impl hash::Hash for SmolBitSet {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
@@ -43,7 +40,7 @@ mod tests {
     use super::*;
 
     fn hash_helper(a: &SmolBitSet) -> u64 {
-        use hash::{DefaultHasher, Hash, Hasher};
+        use std::hash::{DefaultHasher, Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
         a.hash(&mut hasher);
@@ -61,8 +58,8 @@ mod tests {
     #[test]
     fn normal_inline() {
         let val = 0xC5C5_F00D;
-        let mut a = SmolBitSet::new_small(val);
-        let mut b = SmolBitSet::new_small(val);
+        let mut a = SmolBitSet::new_inline(val);
+        let mut b = SmolBitSet::new_inline(val);
         assert_hash_eq(&a, &b);
 
         a >>= 1u8;
@@ -76,8 +73,8 @@ mod tests {
     #[test]
     fn sparse_inline() {
         let flag = 1337;
-        let mut a = SmolBitSet::new_flag(flag);
-        let mut b = SmolBitSet::new_flag(flag);
+        let mut a = SmolBitSet::flag(flag);
+        let mut b = SmolBitSet::flag(flag);
         assert_hash_eq(&a, &b);
 
         a <<= 42u8;
@@ -90,8 +87,8 @@ mod tests {
 
     #[test]
     fn mixed_inline() {
-        let mut a = SmolBitSet::new_small(1 << 15);
-        let mut b = SmolBitSet::new_flag(15);
+        let mut a = SmolBitSet::new_inline(1 << 15);
+        let mut b = SmolBitSet::flag(15);
         assert_hash_eq(&a, &b);
 
         b <<= 420u16;
@@ -122,8 +119,8 @@ mod tests {
     #[test]
     fn normal_mixed() {
         let val = 0xBEEF_F00D;
-        let mut a = SmolBitSet::new_small(val);
-        let mut b = SmolBitSet::new_small(val);
+        let mut a = SmolBitSet::new_inline(val);
+        let mut b = SmolBitSet::new_inline(val);
         b.spill(70);
         assert!(a.is_inline());
         assert!(!b.is_inline());

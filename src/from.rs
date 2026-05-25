@@ -9,7 +9,7 @@ macro_rules! impl_from {
     ($($t:ty),+) => {$(
         impl From<$t> for SmolBitSet {
             fn from(value: $t) -> Self {
-                let mut sbs = SmolBitSet::new();
+                let mut sbs = SmolBitSet::empty();
                 sbs.ensure_capacity(highest_set_bit!($t, value));
 
                 if sbs.is_inline() {
@@ -58,7 +58,7 @@ impl FromStr for SmolBitSet {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let tmp = num_bigint::BigUint::from_str(s).map_err(|_| ())?;
 
-        let mut sbs = Self::new();
+        let mut sbs = Self::empty();
         sbs.ensure_capacity(tmp.bits() as usize);
 
         let digits = tmp.to_u32_digits();

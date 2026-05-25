@@ -204,8 +204,8 @@ mod tests {
 
         #[test]
         fn eq() {
-            let mut a = SmolBitSet::new_flag(12345);
-            let mut b = SmolBitSet::new_flag(12345);
+            let mut a = SmolBitSet::flag(12345);
+            let mut b = SmolBitSet::flag(12345);
             assert_eq!(a, b);
 
             a <<= 550;
@@ -217,8 +217,8 @@ mod tests {
 
         #[test]
         fn ord() {
-            let mut a = SmolBitSet::new_flag(12345);
-            let mut b = SmolBitSet::new_flag(54321);
+            let mut a = SmolBitSet::flag(12345);
+            let mut b = SmolBitSet::flag(54321);
             assert!(a < b);
 
             a <<= 100_000;
@@ -235,8 +235,8 @@ mod tests {
 
         #[test]
         fn eq() {
-            let mut a = SmolBitSet::new_small(1 << 22);
-            let mut b = SmolBitSet::new_flag(22);
+            let mut a = SmolBitSet::new_inline(1 << 22);
+            let mut b = SmolBitSet::flag(22);
             assert_eq!(a, b);
 
             a <<= 32;
@@ -248,8 +248,8 @@ mod tests {
 
         #[test]
         fn ord() {
-            let mut a = SmolBitSet::new_small(1);
-            let mut b = SmolBitSet::new_flag(22);
+            let mut a = SmolBitSet::new_inline(1);
+            let mut b = SmolBitSet::flag(22);
             assert!(a < b);
 
             a <<= 80;

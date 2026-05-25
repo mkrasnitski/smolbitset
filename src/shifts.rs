@@ -81,7 +81,7 @@ fn sbs_shr(sbs: &mut SmolBitSet, rhs: usize) {
             },
             None => {
                 // bitset is now empty, switching to non-sparse inline representation
-                *sbs = SmolBitSet::new();
+                *sbs = SmolBitSet::empty();
             }
         }
 
@@ -294,7 +294,7 @@ mod tests {
         #[test]
         fn sparse_inline() {
             let flag = 0;
-            let mut a = SmolBitSet::new_flag(flag);
+            let mut a = SmolBitSet::flag(flag);
             assert!(a.is_inline());
             assert!(a.is_sparse());
 
@@ -372,7 +372,7 @@ mod tests {
         #[test]
         fn sparse_inline() {
             let flag = u16::MAX as u32;
-            let mut a = SmolBitSet::new_flag(flag);
+            let mut a = SmolBitSet::flag(flag);
             assert!(a.is_inline());
             assert!(a.is_sparse());
 

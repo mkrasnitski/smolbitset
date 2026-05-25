@@ -1,10 +1,6 @@
 use crate::bst_slice::BstSlice;
 use crate::{BST_BITS, SmolBitSet};
 
-#[cfg(feature = "std")]
-use std::fmt;
-
-#[cfg(not(feature = "std"))]
 use core::fmt;
 
 use fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result, UpperHex};

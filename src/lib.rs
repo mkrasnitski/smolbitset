@@ -1,32 +1,39 @@
-//! A crate for dynamically sized bitsets with memory usage optimizations.\
-//! Supports 64 and 32 bit targets and has integrations with `serde` and `typesize`.\
-//! For `no_std` support disable the default `std` feature. The `no_std` environment must support [`alloc`].
+//! A crate for dynamically sized bitsets with memory usage optimizations.
 //!
-//! Bitsets are stored in 2 different modes: inline without any allocations or on the heap.\
-//! Additionally inline mode has 2 different encodings: normal and sparse.\
-//! Normal encoding stores a regular bitset in a [`usize`] (minus the needed bits for mode and encoding flags).\
-//! Sparse encoding stores a single bit index which allows for `const` construction of flag bitsets exceeding the inline bitset capacity.\
-//! Heap mode does not support sparse encoding (yet, support may be added in the future).
+//! Supports 64 and 32 bit targets and integrates with `serde` and `typesize`. Also supports
+//! `no_std` environments by disabling the `std` feature. The `no_std` environment must support
+//! [`alloc`].
 //!
-//! | Pointer Size | [`size_of::<SmolBitSet>`] | Inline Capacity | Max Inline Sparse Bit |  Max Heap Capacity  |
-//! |-------------:|--------------------------:|----------------:|----------------------:|--------------------:|
-//! | 32 bits      | 4 bytes                   | 30 bits         | 1 073 741 824 (2^30)    | 2^37 bits (~17.1GB) |
-//! | 64 bits      | 8 bytes                   | 62 bits         | 4 294 967 296 (2^32)    | 2^37 bits (~17.1GB) |
+//! Constructing a [`SmolBitSet`] in a `const` context is supported in the following ways:
+//! 1. If the value has multiple set bits, call [`SmolBitSet::new_inline`].
+//! 2. If the value has only a single set bit (i.e. it represents a flag), [`SmolBitSet::flag`] is
+//!    recommended.
 //!
-//! Furthermore [`SmolBitSet`] has a niche optimization so [`Option<SmolBitSet>`] has the same size as [`SmolBitSet`].
+//! ## Memory usage
+//!
+//! Bitsets of small enough size are stored inline using a single `usize`, and otherwise are
+//! allocated on the heap.
+//!
+//! | Target Pointer Size | [`size_of::<SmolBitSet>`] | Inline Capacity |  Max Heap Capacity  |
+//! |--------------------:|--------------------------:|----------------:|--------------------:|
+//! | 32 bits             | 4 bytes                   | 30 bits         | 2^37 bits (~17.1GB) |
+//! | 64 bits             | 8 bytes                   | 62 bits         | 2^37 bits (~17.1GB) |
+//!
+//! Furthermore, [`SmolBitSet`] has a niche optimization so [`Option<SmolBitSet>`] has the same size
+//! as [`SmolBitSet`].
 //!
 //! ## Limitations
 //!
-//! [`SmolBitSet`] can not implement [`Copy`].\
-//! Implementing [`core::ops::Not`] is also not possible (or rather complex).\
-//! Related alternative methods are provided via [`SmolBitSet::and_not`] and [`SmolBitSet::and_not_assign`].
+//! * [`SmolBitSet`] does not implement [`Copy`].
+//! * Implementing [`core::ops::Not`] is also not possible (or rather complex).\
+//!   Related alternative methods are provided via [`SmolBitSet::and_not`] and [`SmolBitSet::and_not_assign`].
 //!
 //! # Example
 //!
 //! ```
 //! use smolbitset::SmolBitSet;
 //!
-//! let mut sbs = SmolBitSet::new();
+//! let mut sbs = SmolBitSet::empty();
 //!
 //! sbs |= 1u32 << 5;
 //! sbs >>= 5u8;
@@ -41,8 +48,8 @@
 //!
 //! # Minimum Supported Rust Version
 //!
-//! This is currently `1.89`, and is considered a breaking change to increase.
-//!
+//! Currently this crate supports an MSRV of Rust 1.89.0, and increasing the MSRV is considered a
+//! breaking change.
 
 #![doc(html_root_url = "https://docs.rs/smolbitset/*")]
 #![allow(dead_code)]
@@ -51,21 +58,16 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc as extern_alloc;
 #[cfg(not(feature = "std"))]
-use {
-    core::slice,
-    extern_alloc::alloc::{self, Layout, handle_alloc_error},
-};
+use extern_alloc::alloc::{self, Layout, handle_alloc_error};
 
 #[cfg(feature = "std")]
-use {
-    std::alloc::{self, Layout, handle_alloc_error},
-    std::slice,
-};
+use std::alloc::{self, Layout, handle_alloc_error};
 
 use core::convert::Infallible;
 use core::mem::MaybeUninit;
 use core::num::NonZero;
 use core::ptr::NonNull;
+use core::slice;
 
 /// Returns the index of the most significant bit set to 1 in the given data.
 ///
@@ -130,11 +132,11 @@ impl SmolBitSet {
     ///
     /// ```
     /// # use smolbitset::SmolBitSet;
-    /// let mut sbs = SmolBitSet::new();
+    /// let mut sbs = SmolBitSet::empty();
     /// ```
     #[must_use]
     #[inline]
-    pub const fn new() -> Self {
+    pub const fn empty() -> Self {
         let ptr = NonNull::without_provenance(core::num::NonZero::<usize>::MIN);
 
         Self { ptr }
@@ -150,17 +152,17 @@ impl SmolBitSet {
     ///
     /// ```
     /// # use smolbitset::SmolBitSet;
-    /// const sbs: SmolBitSet = SmolBitSet::new_small(1234);
+    /// const sbs: SmolBitSet = SmolBitSet::new_inline(1234);
     /// assert_eq!(sbs, SmolBitSet::from(1234u16));
     /// ```
     #[must_use]
-    pub const fn new_small(val: usize) -> Self {
+    pub const fn new_inline(val: usize) -> Self {
         assert!(
             val <= MAX_INLINE_VAL,
             "val too large for a non allocating SmolBitSet"
         );
 
-        let mut res = Self::new();
+        let mut res = Self::empty();
         unsafe {
             res.write_inline_data_unchecked(val);
         }
@@ -178,17 +180,17 @@ impl SmolBitSet {
     ///
     /// ```
     /// # use smolbitset::SmolBitSet;
-    /// const sbs: SmolBitSet = SmolBitSet::new_flag(1234);
-    /// assert_eq!(sbs, SmolBitSet::new_flag(0) << 1234);
+    /// const sbs: SmolBitSet = SmolBitSet::flag(1234);
+    /// assert_eq!(sbs, SmolBitSet::flag(0) << 1234);
     /// ```
     #[must_use]
-    pub const fn new_flag(bit: BitSliceType) -> Self {
+    pub const fn flag(bit: BitSliceType) -> Self {
         assert!(
             bit <= MAX_INLINE_SPARSE_VAL,
             "bit index out of range for a non allocating sparse SmolBitSet"
         );
 
-        let mut res = Self::new();
+        let mut res = Self::empty();
         unsafe {
             res.write_inline_sparse_data_unchecked(bit);
         }
@@ -206,7 +208,7 @@ impl SmolBitSet {
     ///
     /// ```
     /// # use smolbitset::SmolBitSet;
-    /// const sbs: SmolBitSet = SmolBitSet::from_bits_small([0, 4, 1, 6]);
+    /// const sbs: SmolBitSet = SmolBitSet::from_bits_inline([0, 4, 1, 6]);
     /// assert_eq!(sbs, SmolBitSet::from(0b0101_0011u8));
     /// ```
     ///
@@ -214,17 +216,17 @@ impl SmolBitSet {
     /// # use smolbitset::SmolBitSet;
     /// // this panics since 62 is outside of the range
     /// // a SmolBitSet can hold without incurring a heap allocation
-    /// let sbs = SmolBitSet::from_bits_small([62]);
+    /// let sbs = SmolBitSet::from_bits_inline([62]);
     /// ```
     ///
     /// ```compile_fail
     /// # use smolbitset::SmolBitSet;
     /// // this fails to compile since the const evaluation
     /// // panics for the same reason as above
-    /// const sbs: SmolBitSet = SmolBitSet::from_bits_small([62]);
+    /// const sbs: SmolBitSet = SmolBitSet::from_bits_inline([62]);
     /// ```
     #[must_use]
-    pub const fn from_bits_small<const N: usize>(bits: [usize; N]) -> Self {
+    pub const fn from_bits_inline<const N: usize>(bits: [usize; N]) -> Self {
         let mut res = 0;
         let mut i = 0;
 
@@ -239,7 +241,7 @@ impl SmolBitSet {
             i += 1;
         }
 
-        Self::new_small(res)
+        Self::new_inline(res)
     }
 
     /// Creates a new [`SmolBitSet`] from the provided slice of bit indices.
@@ -259,12 +261,13 @@ impl SmolBitSet {
     pub fn from_bits(bits: &[usize]) -> Self {
         // TODO: check if sparse representation would be more efficient for the given bit indices
 
-        let Some(hb) = bits.iter().copied().max() else {
-            return Self::new();
+        let mut res = Self::empty();
+
+        let Some(b) = bits.iter().copied().max() else {
+            return res;
         };
 
-        let mut res = Self::new();
-        res.ensure_capacity(hb + 1);
+        res.ensure_capacity(b + 1);
 
         if res.is_inline() {
             let mut data = 0;
@@ -288,12 +291,6 @@ impl SmolBitSet {
     }
 
     #[inline]
-    // #[deprecated = "use `SmolBitSet::representation` instead"]
-    fn is_inline(&self) -> bool {
-        self.ptr.addr().get() & 0b1 == 1
-    }
-
-    #[inline]
     fn representation(&self) -> Representation {
         match self.ptr.addr().get() & 0b11 {
             0b00 => Representation::NormalHeap,
@@ -301,6 +298,14 @@ impl SmolBitSet {
             0b11 => Representation::SparseInline,
             _ => unreachable!(),
         }
+    }
+
+    #[inline]
+    fn is_inline(&self) -> bool {
+        matches!(
+            self.representation(),
+            Representation::NormalInline | Representation::SparseInline
+        )
     }
 
     #[inline]
@@ -317,17 +322,8 @@ impl SmolBitSet {
     }
 
     #[inline]
-    // #[deprecated = "use `SmolBitSet::representation` instead"]
     fn is_sparse(&self) -> bool {
-        self.ptr.addr().get() & 0b10 != 0
-    }
-
-    #[inline]
-    fn set_sparse(&mut self, sparse: bool) {
-        let addr = self.ptr.addr().get();
-        let new_addr = if sparse { addr | 0b10 } else { addr & !0b10 };
-        let addr = unsafe { NonZero::new_unchecked(new_addr) };
-        self.ptr = NonNull::without_provenance(addr);
+        matches!(self.representation(), Representation::SparseInline)
     }
 
     unsafe fn get_inline_sparse_data_unchecked(&self) -> BitSliceType {
@@ -400,7 +396,7 @@ impl SmolBitSet {
         );
 
         let flag = unsafe { self.get_inline_sparse_data_unchecked() };
-        Self::new_small(1) << flag
+        Self::new_inline(1) << flag
     }
 
     /// # Warning
@@ -566,7 +562,7 @@ unsafe impl Sync for SmolBitSet {}
 impl Default for SmolBitSet {
     #[inline]
     fn default() -> Self {
-        Self::new()
+        Self::empty()
     }
 }
 
@@ -676,7 +672,7 @@ mod tests {
 
     #[test]
     fn ensure_capacity() {
-        let mut t = SmolBitSet::new();
+        let mut t = SmolBitSet::empty();
         assert!(t.is_inline());
 
         t.ensure_capacity(0);
@@ -704,7 +700,7 @@ mod tests {
 
     #[test]
     fn set_get_inline() {
-        let mut sbs = SmolBitSet::new();
+        let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         unsafe {
@@ -744,7 +740,7 @@ mod tests {
 
     #[test]
     fn spill() {
-        let mut sbs = SmolBitSet::new();
+        let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.spill(30);
@@ -753,21 +749,21 @@ mod tests {
         // and spill will always allocate to at least store the inline data
         assert_eq!(sbs.len(), 2);
 
-        let mut sbs = SmolBitSet::new();
+        let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.spill(55);
         assert!(!sbs.is_inline());
         assert_eq!(sbs.len(), 2);
 
-        let mut sbs = SmolBitSet::new();
+        let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.spill(64);
         assert!(!sbs.is_inline());
         assert_eq!(sbs.len(), 2);
 
-        let mut sbs = SmolBitSet::new();
+        let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.spill(65);
