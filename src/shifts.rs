@@ -2,124 +2,126 @@ use crate::{BITS, SmolBitSet};
 
 use core::ops::{Shl, ShlAssign, Shr, ShrAssign};
 
-fn sbs_shl(sbs: &mut SmolBitSet, rhs: usize) {
-    if rhs == 0 {
-        return;
-    }
-
-    if sbs.is_sparse() {
-        let flag = unsafe { sbs.get_sparse_data_unchecked() };
-        let new_flag = flag
-            .checked_add(rhs)
-            .expect("Cannot shift left by an amount that causes overflow");
-
-        unsafe {
-            sbs.write_sparse_data_unchecked(new_flag);
-        }
-
-        return;
-    }
-
-    let hb: usize = sbs.highest_set_bit();
-    sbs.ensure_capacity(hb + rhs);
-
-    if sbs.is_inline() {
-        unsafe {
-            sbs.write_inline_data_unchecked(
-                sbs.get_inline_data_unchecked()
-                    .checked_shl(rhs as u32)
-                    .unwrap_or(0),
-            );
-        }
-    } else {
-        let data = unsafe { sbs.as_slice_mut_unchecked() };
-
-        // shifting further than one slice member?
-        let offset = rhs / BITS;
-        if offset > 0 {
-            for i in (0..data.len()).rev() {
-                data[i] = if let Some(src_idx) = i.checked_sub(offset) {
-                    data[src_idx]
-                } else {
-                    0
-                };
-            }
-        }
-
-        let shift = rhs % BITS;
-        if shift == 0 {
-            // offset shifting was enough
+impl SmolBitSet {
+    fn shift_left_assign(&mut self, rhs: usize) {
+        if rhs == 0 {
             return;
         }
 
-        let carry_shift = BITS - shift;
-        let mut carry = 0;
-        for d in data.iter_mut() {
-            let new = (*d << shift) | carry;
-            carry = *d >> carry_shift;
-            *d = new;
-        }
-    }
-}
+        if self.is_sparse() {
+            let flag = unsafe { self.get_sparse_data_unchecked() };
+            let new_flag = flag
+                .checked_add(rhs)
+                .expect("Cannot shift left by an amount that causes overflow");
 
-fn sbs_shr(sbs: &mut SmolBitSet, rhs: usize) {
-    if rhs == 0 {
-        return;
-    }
-
-    if sbs.is_sparse() {
-        let flag = unsafe { sbs.get_sparse_data_unchecked() };
-        let new_flag = flag.checked_sub(rhs);
-
-        match new_flag {
-            Some(f) => unsafe {
-                sbs.write_sparse_data_unchecked(f);
-            },
-            None => {
-                // bitset is now empty, switching to non-sparse inline representation
-                *sbs = SmolBitSet::empty();
+            unsafe {
+                self.write_sparse_data_unchecked(new_flag);
             }
-        }
 
-        return;
-    }
-
-    if sbs.is_inline() {
-        unsafe {
-            sbs.write_inline_data_unchecked(
-                sbs.get_inline_data_unchecked()
-                    .checked_shr(rhs as u32)
-                    .unwrap_or(0),
-            );
-        }
-    } else {
-        let data = unsafe { sbs.as_slice_mut_unchecked() };
-
-        // shifting further than one slice member?
-        let offset = rhs / BITS;
-        if offset > 0 {
-            let len = data.len();
-            for i in 0..len {
-                data[i] = if (i + offset) < len {
-                    data[i + offset]
-                } else {
-                    0
-                };
-            }
-        }
-
-        let shift = rhs % BITS;
-        if shift == 0 {
-            // offset shifting was enough
             return;
         }
 
-        let carry_shift = BITS - shift;
-        let mut carry = 0;
-        for d in data.iter_mut().rev() {
-            let new = (*d >> shift) | carry;
-            carry = *d << carry_shift;
-            *d = new;
+        let hb: usize = self.highest_set_bit();
+        self.ensure_capacity(hb + rhs);
+
+        if self.is_inline() {
+            unsafe {
+                self.write_inline_data_unchecked(
+                    self.get_inline_data_unchecked()
+                        .checked_shl(rhs as u32)
+                        .unwrap_or(0),
+                );
+            }
+        } else {
+            let data = unsafe { self.as_slice_mut_unchecked() };
+
+            // shifting further than one slice member?
+            let offset = rhs / BITS;
+            if offset > 0 {
+                for i in (0..data.len()).rev() {
+                    data[i] = if let Some(src_idx) = i.checked_sub(offset) {
+                        data[src_idx]
+                    } else {
+                        0
+                    };
+                }
+            }
+
+            let shift = rhs % BITS;
+            if shift == 0 {
+                // offset shifting was enough
+                return;
+            }
+
+            let carry_shift = BITS - shift;
+            let mut carry = 0;
+            for d in data.iter_mut() {
+                let new = (*d << shift) | carry;
+                carry = *d >> carry_shift;
+                *d = new;
+            }
+        }
+    }
+
+    fn shift_right_assign(&mut self, rhs: usize) {
+        if rhs == 0 {
+            return;
+        }
+
+        if self.is_sparse() {
+            let flag = unsafe { self.get_sparse_data_unchecked() };
+            let new_flag = flag.checked_sub(rhs);
+
+            match new_flag {
+                Some(f) => unsafe {
+                    self.write_sparse_data_unchecked(f);
+                },
+                None => {
+                    // bitset is now empty, switching to non-sparse inline representation
+                    *self = Self::empty();
+                }
+            }
+
+            return;
+        }
+
+        if self.is_inline() {
+            unsafe {
+                self.write_inline_data_unchecked(
+                    self.get_inline_data_unchecked()
+                        .checked_shr(rhs as u32)
+                        .unwrap_or(0),
+                );
+            }
+        } else {
+            let data = unsafe { self.as_slice_mut_unchecked() };
+
+            // shifting further than one slice member?
+            let offset = rhs / BITS;
+            if offset > 0 {
+                let len = data.len();
+                for i in 0..len {
+                    data[i] = if (i + offset) < len {
+                        data[i + offset]
+                    } else {
+                        0
+                    };
+                }
+            }
+
+            let shift = rhs % BITS;
+            if shift == 0 {
+                // offset shifting was enough
+                return;
+            }
+
+            let carry_shift = BITS - shift;
+            let mut carry = 0;
+            for d in data.iter_mut().rev() {
+                let new = (*d >> shift) | carry;
+                carry = *d << carry_shift;
+                *d = new;
+            }
         }
     }
 }
@@ -142,7 +144,7 @@ macro_rules! impl_shifts {
                     panic!("Cannot shift left by a negative amount");
                 }
 
-                sbs_shl(&mut self, rhs as usize);
+                self <<= rhs;
                 self
             }
         }
@@ -155,7 +157,7 @@ macro_rules! impl_shifts {
                     panic!("Cannot shift left by a negative amount");
                 }
 
-                sbs_shl(self, rhs as usize);
+                self.shift_left_assign(rhs as usize)
             }
         }
 
@@ -169,7 +171,7 @@ macro_rules! impl_shifts {
                     panic!("Cannot shift right by a negative amount");
                 }
 
-                sbs_shr(&mut self, rhs as usize);
+                self >>= rhs;
                 self
             }
         }
@@ -182,7 +184,7 @@ macro_rules! impl_shifts {
                     panic!("Cannot shift right by a negative amount");
                 }
 
-                sbs_shr(self, rhs as usize);
+                self.shift_right_assign(rhs as usize)
             }
         }
 
