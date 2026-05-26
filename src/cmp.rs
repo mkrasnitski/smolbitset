@@ -1,5 +1,5 @@
 use crate::bst_slice::BstSlice;
-use crate::{BitSliceType, Representation, SmolBitSet};
+use crate::{Representation, SmolBitSet};
 
 use core::{cmp, iter};
 
@@ -21,8 +21,8 @@ impl cmp::PartialEq for SmolBitSet {
 
         match (self.representation(), other.representation()) {
             (Representation::SparseInline, Representation::SparseInline) => {
-                let this = unsafe { self.get_inline_sparse_data_unchecked() };
-                let other = unsafe { other.get_inline_sparse_data_unchecked() };
+                let this = unsafe { self.get_sparse_data_unchecked() };
+                let other = unsafe { other.get_sparse_data_unchecked() };
                 this == other
             }
             (
@@ -61,7 +61,7 @@ impl cmp::PartialOrd for SmolBitSet {
 
 impl cmp::Ord for SmolBitSet {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        fn slice_cmp(long: &[BitSliceType], short: &[BitSliceType]) -> cmp::Ordering {
+        fn slice_cmp(long: &[usize], short: &[usize]) -> cmp::Ordering {
             let (prefix, suffix) = long.split_at(short.len());
             if suffix.iter().any(|&x| x != 0) {
                 return cmp::Ordering::Greater;
@@ -90,8 +90,8 @@ impl cmp::Ord for SmolBitSet {
 
         match (self.representation(), other.representation()) {
             (Representation::SparseInline, Representation::SparseInline) => {
-                let this = unsafe { self.get_inline_sparse_data_unchecked() };
-                let other = unsafe { other.get_inline_sparse_data_unchecked() };
+                let this = unsafe { self.get_sparse_data_unchecked() };
+                let other = unsafe { other.get_sparse_data_unchecked() };
                 this.cmp(&other)
             }
             (

@@ -1,5 +1,5 @@
 use crate::bst_slice::BstSlice;
-use crate::{BST_BITS, BitSliceType, INLINE_SLICE_PARTS, Representation, SmolBitSet};
+use crate::{BITS, Representation, SmolBitSet};
 
 use core::iter;
 use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
@@ -8,8 +8,8 @@ macro_rules! shortening_bitop_fn_body {
     ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:expr, $self_op:ident) => {
         match ($lhs.representation(), $rhs.representation()) {
             (Representation::SparseInline, Representation::SparseInline) => unsafe {
-                let lhs_flag = $lhs.get_inline_sparse_data_unchecked();
-                let rhs_flag = $rhs.get_inline_sparse_data_unchecked();
+                let lhs_flag = $lhs.get_sparse_data_unchecked();
+                let rhs_flag = $rhs.get_sparse_data_unchecked();
 
                 if $sparse_cond(lhs_flag, rhs_flag) {
                     // result is still sparse and lhs already has the correct flag set
@@ -22,14 +22,14 @@ macro_rules! shortening_bitop_fn_body {
                 Representation::SparseInline,
                 Representation::NormalInline | Representation::NormalHeap,
             ) => {
-                let lhs_flag = unsafe { $lhs.get_inline_sparse_data_unchecked() };
-                let target_elem = lhs_flag / BST_BITS as u32;
-                let target_shift = lhs_flag.rem_euclid(BST_BITS as u32);
+                let lhs_flag = unsafe { $lhs.get_sparse_data_unchecked() };
+                let target_elem = lhs_flag / BITS;
+                let target_shift = lhs_flag % BITS;
 
                 let rhs_bst = BstSlice::new($rhs);
                 let rhs_slice = rhs_bst.slice();
-                let rhs_elem = rhs_slice.iter().nth(target_elem as usize).unwrap_or(&0);
-                let rhs_flag = ((rhs_elem >> target_shift) & 1) as u32 * lhs_flag;
+                let rhs_elem = rhs_slice.iter().nth(target_elem).unwrap_or(&0);
+                let rhs_flag = ((rhs_elem >> target_shift) & 1) * lhs_flag;
 
                 if $sparse_cond(lhs_flag, rhs_flag) {
                     // result is still sparse and lhs already has the correct flag set
@@ -42,14 +42,14 @@ macro_rules! shortening_bitop_fn_body {
                 Representation::NormalInline | Representation::NormalHeap,
                 Representation::SparseInline,
             ) => {
-                let rhs_flag = unsafe { $rhs.get_inline_sparse_data_unchecked() };
-                let target_elem = rhs_flag / BST_BITS as u32;
-                let target_shift = rhs_flag.rem_euclid(BST_BITS as u32);
+                let rhs_flag = unsafe { $rhs.get_sparse_data_unchecked() };
+                let target_elem = rhs_flag / BITS;
+                let target_shift = rhs_flag % BITS;
 
                 let lhs_bst = BstSlice::new($lhs);
                 let lhs_slice = lhs_bst.slice();
-                let lhs_elem = lhs_slice.iter().nth(target_elem as usize).unwrap_or(&0);
-                let lhs_flag = ((lhs_elem >> target_shift) & 1) as u32 * rhs_flag;
+                let lhs_elem = lhs_slice.iter().nth(target_elem).unwrap_or(&0);
+                let lhs_flag = ((lhs_elem >> target_shift) & 1) * rhs_flag;
 
                 // TODO: clean up the duplication & possibly simplify conditions
                 if $sparse_cond(lhs_flag, rhs_flag) {
@@ -95,10 +95,7 @@ macro_rules! shortening_bitop_fn_body {
                 let rhs = unsafe { $rhs.get_inline_data_unchecked() };
 
                 lhs.iter_mut().enumerate().for_each(|(idx, lhs)| {
-                    $opa(
-                        lhs,
-                        rhs.checked_shr((idx * BST_BITS) as u32).unwrap_or(0) as BitSliceType,
-                    );
+                    $opa(lhs, rhs.checked_shr((idx * BITS) as u32).unwrap_or(0));
                 });
             }
         }
@@ -109,8 +106,8 @@ macro_rules! extending_bitop_fn_body {
     ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:expr, $self_op:ident) => {
         match ($lhs.representation(), $rhs.representation()) {
             (Representation::SparseInline, Representation::SparseInline) => unsafe {
-                let lhs_flag = $lhs.get_inline_sparse_data_unchecked();
-                let rhs_flag = $rhs.get_inline_sparse_data_unchecked();
+                let lhs_flag = $lhs.get_sparse_data_unchecked();
+                let rhs_flag = $rhs.get_sparse_data_unchecked();
 
                 if $sparse_cond(lhs_flag, rhs_flag) {
                     if lhs_flag == rhs_flag {
@@ -169,12 +166,9 @@ macro_rules! extending_bitop_fn_body {
                 let lhs = unsafe { $lhs.as_slice_mut_unchecked() };
                 let rhs = unsafe { $rhs.get_inline_data_unchecked() };
 
-                lhs.iter_mut()
-                    .enumerate()
-                    .take(INLINE_SLICE_PARTS)
-                    .for_each(|(idx, lhs)| {
-                        $opa(lhs, (rhs >> (idx * BST_BITS)) as BitSliceType);
-                    });
+                if let Some(lhs) = lhs.iter_mut().next() {
+                    $opa(lhs, rhs)
+                }
             }
         }
     };
@@ -300,11 +294,7 @@ impl SmolBitSet {
             *lhs &= !rhs;
         }
 
-        const fn sparse_cond(lhs_flag: u32, rhs_flag: u32) -> bool {
-            lhs_flag != rhs_flag
-        }
-
-        shortening_bitop_fn_body!(self, rhs, op, sparse_cond, and_not_assign);
+        shortening_bitop_fn_body!(self, rhs, op, |lhs, rhs| lhs != rhs, and_not_assign);
     }
 }
 
@@ -321,23 +311,17 @@ mod tests {
         fn and_not(self, rhs: Self) -> Self;
     }
 
-    impl AndNot for BitSliceType {
-        fn and_not(self, rhs: Self) -> Self {
-            self & !rhs
-        }
-    }
-
     impl AndNot for usize {
         fn and_not(self, rhs: Self) -> Self {
             self & !rhs
         }
     }
 
-    fn to_bst_vec(sbs: &SmolBitSet) -> Vec<BitSliceType> {
+    fn to_bst_vec(sbs: &SmolBitSet) -> Vec<usize> {
         BstSlice::new(sbs).slice().to_vec()
     }
 
-    fn zero_pad_to(mut vec: Vec<BitSliceType>, len: usize) -> Vec<BitSliceType> {
+    fn zero_pad_to(mut vec: Vec<usize>, len: usize) -> Vec<usize> {
         while vec.len() < len {
             vec.push(0);
         }
@@ -385,18 +369,12 @@ mod tests {
                     fn $name() {
                         let a = SmolBitSet::from($a);
                         let b = SmolBitSet::from($b);
-                        assert_eq!(a.len(), 2);
-                        assert_eq!(b.len(), 2);
+                        assert_eq!(a.len(), 1);
+                        assert_eq!(b.len(), 1);
 
                         let res = a.$name(&b);
-                        assert_eq!(res.len(), 2);
-                        assert_eq!(
-                            res.as_slice(),
-                            [
-                                (($a as BitSliceType).$name($b as BitSliceType)),
-                                ((($a >> 32) as BitSliceType).$name(($b >> 32) as BitSliceType))
-                            ]
-                        );
+                        assert_eq!(res.len(), 1);
+                        assert_eq!(res.as_slice(), [($a as usize).$name($b as usize)]);
                     }
                 )*}
             }
@@ -419,16 +397,10 @@ mod tests {
                         let a = SmolBitSet::from($a);
                         let b = SmolBitSet::from($b);
                         assert!(a.is_inline());
-                        assert_eq!(b.len(), 2);
+                        assert_eq!(b.len(), 1);
 
                         let res1 = a.clone().$name(&b);
-                        assert_eq!(
-                            to_bst_vec(&res1),
-                            [
-                                (($a as BitSliceType).$name($b as BitSliceType)),
-                                ((($a >> 32) as BitSliceType).$name(($b >> 32) as BitSliceType))
-                            ]
-                        );
+                        assert_eq!(to_bst_vec(&res1), [($a as usize).$name($b as usize)]);
 
                         let res2 = b.$name(&a);
                         assert_eq!(res2, res1);
@@ -451,16 +423,10 @@ mod tests {
                 let a = SmolBitSet::from(A);
                 let b = SmolBitSet::from(B);
                 assert!(a.is_inline());
-                assert_eq!(b.len(), 2);
+                assert_eq!(b.len(), 1);
 
                 let res1 = a.and_not(&b);
-                assert_eq!(
-                    to_bst_vec(&res1),
-                    [
-                        ((A as BitSliceType).and_not(B as BitSliceType)),
-                        (((A >> 32) as BitSliceType).and_not((B >> 32) as BitSliceType))
-                    ]
-                );
+                assert_eq!(to_bst_vec(&res1), [(A as usize).and_not(B as usize)]);
             }
         }
 
@@ -481,9 +447,8 @@ mod tests {
                         assert_eq!(
                             to_bst_vec(&res),
                             [
-                                ((0 as BitSliceType).$name($b as BitSliceType)),
-                                ((($a) as BitSliceType).$name(($b >> 32) as BitSliceType)),
-                                ((($a >> 32) as BitSliceType).$name(0 as BitSliceType))
+                                ((($a << 32) as usize).$name($b as usize)),
+                                ((($a >> 32) as usize).$name(0 as usize))
                             ]
                         );
                     }
@@ -513,11 +478,10 @@ mod tests {
 
                         let res = lhs.$name(&rhs);
                         assert_eq!(
-                            zero_pad_to(to_bst_vec(&res), 3),
+                            zero_pad_to(to_bst_vec(&res), 2),
                             [
-                                (($a as BitSliceType).$name(0 as BitSliceType)),
-                                ((($a >> 32) as BitSliceType).$name($b as BitSliceType)),
-                                ((0 as BitSliceType).$name(($b >> 32) as BitSliceType))
+                                (($a as usize).$name(($b << 32) as usize)),
+                                ((0 as usize).$name(($b >> 32) as usize))
                             ]
                         );
                     }
@@ -555,8 +519,8 @@ mod tests {
 
                         let normal_res = (1usize << $a as usize).$op(1usize << $b as usize);
                         if res.is_sparse() {
-                            let res_flag = unsafe { res.get_inline_sparse_data_unchecked() };
-                            assert_eq!(res_flag, normal_res.trailing_zeros());
+                            let res_flag = unsafe { res.get_sparse_data_unchecked() };
+                            assert_eq!(res_flag, normal_res.trailing_zeros() as usize);
                         } else {
                             let d = unsafe { res.get_inline_data_unchecked() };
                             assert_eq!(d, normal_res);
@@ -598,9 +562,9 @@ mod tests {
                             let normal_res = a_u.$op(b_u);
 
                             if res.is_sparse() {
-                                let res_flag = unsafe { res.get_inline_sparse_data_unchecked() };
+                                let res_flag = unsafe { res.get_sparse_data_unchecked() };
                                 assert_eq!(normal_res.count_ones(), 1);
-                                assert_eq!(res_flag, normal_res.trailing_zeros());
+                                assert_eq!(res_flag, normal_res.trailing_zeros() as usize);
                             } else {
                                 let d = unsafe { res.get_inline_data_unchecked() };
                                 assert_eq!(d, normal_res);

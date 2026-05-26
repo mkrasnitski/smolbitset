@@ -1,7 +1,10 @@
 use crate::bst_slice::BstSlice;
-use crate::{BST_BITS, SmolBitSet};
+use crate::{BITS, SmolBitSet};
 
 use core::fmt;
+
+#[cfg(not(feature = "std"))]
+use extern_alloc::vec::Vec;
 
 use fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result, UpperHex};
 
@@ -22,11 +25,15 @@ impl Display for SmolBitSet {
         }
 
         if self.is_inline() {
-            return write!(f, "{}", unsafe { self.get_inline_data_unchecked() });
+            write!(f, "{}", unsafe { self.get_inline_data_unchecked() })
+        } else {
+            let slice = unsafe { self.as_slice_unchecked() };
+            let bytes = slice
+                .iter()
+                .flat_map(|block| block.to_le_bytes().into_iter())
+                .collect::<Vec<_>>();
+            write!(f, "{}", num_bigint::BigUint::from_bytes_le(&bytes))
         }
-
-        let tmp = num_bigint::BigUint::from_slice(unsafe { self.as_slice_unchecked() });
-        write!(f, "{tmp}")
     }
 }
 
@@ -43,11 +50,11 @@ macro_rules! impl_format {
                 }
 
                 let data = unsafe { self.as_slice_unchecked() };
-                let highest = self.highest_set_bit().saturating_sub(1).div_ceil(BST_BITS);
+                let highest = self.highest_set_bit().saturating_sub(1).div_ceil(BITS);
 
                 let mut full_width = false;
                 for idx in (0..highest).rev() {
-                    const PADDING: usize = BST_BITS / ($variants as u8).ilog2() as usize;
+                    const PADDING: usize = BITS / ($variants as u8).ilog2() as usize;
 
                     let d = data[idx];
 

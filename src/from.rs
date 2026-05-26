@@ -1,9 +1,10 @@
-use crate::{BST_BITS, BitSliceType, SmolBitSet};
+use crate::{BITS, SmolBitSet};
 
 use core::str::FromStr;
+use num_bigint::{BigUint, ParseBigIntError};
 
 #[cfg(not(feature = "std"))]
-use extern_alloc::string::String;
+use extern_alloc::{string::String, vec::Vec};
 
 macro_rules! impl_from {
     ($($t:ty),+) => {$(
@@ -15,13 +16,10 @@ macro_rules! impl_from {
                 if sbs.is_inline() {
                     unsafe { sbs.write_inline_data_unchecked(value as usize) };
                 } else {
-                    const T_BITS: usize = <$t>::BITS as usize;
-                    const STEPS: usize = T_BITS.div_ceil(BST_BITS);
-
                     let data = unsafe { sbs.as_slice_mut_unchecked() };
 
-                    for i in 0..STEPS {
-                        data[i] = (value >> (i * BST_BITS)) as BitSliceType;
+                    for i in 0..(<$t>::BITS as usize).div_ceil(BITS) {
+                        data[i] = (value >> (i * BITS)) as usize;
                     }
                 }
 
@@ -29,22 +27,19 @@ macro_rules! impl_from {
             }
         }
 
-        impl_from!(@ref $t);
-    )*};
-    (@ref $t:ty) => {
         impl From<&$t> for SmolBitSet {
             #[inline]
             fn from(value: &$t) -> Self {
                 Self::from(*value)
             }
         }
-    }
+    )*};
 }
 
 impl_from!(u8, u16, u32, u64, u128, usize);
 
 impl TryFrom<String> for SmolBitSet {
-    type Error = ();
+    type Error = ParseBigIntError;
 
     #[inline]
     fn try_from(value: String) -> Result<Self, Self::Error> {
@@ -53,28 +48,30 @@ impl TryFrom<String> for SmolBitSet {
 }
 
 impl FromStr for SmolBitSet {
-    type Err = ();
+    type Err = ParseBigIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let tmp = num_bigint::BigUint::from_str(s).map_err(|_| ())?;
+        let tmp = BigUint::from_str(s)?;
 
         let mut sbs = Self::empty();
         sbs.ensure_capacity(tmp.bits() as usize);
 
+        #[cfg(target_pointer_width = "32")]
         let digits = tmp.to_u32_digits();
-        let digit_count = digits.len();
+        #[cfg(target_pointer_width = "64")]
+        let digits = tmp.to_u64_digits();
+
+        let digits = digits
+            .into_iter()
+            .map(|digit| digit as usize)
+            .collect::<Vec<_>>();
+
         if sbs.is_inline() {
-            match digit_count {
-                0 => {}
-                1 => unsafe { sbs.write_inline_data_unchecked(digits[0] as usize) },
-                2 => unsafe {
-                    sbs.write_inline_data_unchecked(
-                        (digits[0] as usize) | ((digits[1] as usize) << BST_BITS),
-                    );
-                },
-                _ => unreachable!("Too many digits for inline data"),
+            if let Some(&n) = digits.first() {
+                unsafe { sbs.write_inline_data_unchecked(n) }
             }
         } else {
+            let digit_count = digits.len();
             assert!(sbs.len() >= digit_count);
 
             let data = unsafe { sbs.as_slice_mut_unchecked() };
@@ -116,20 +113,34 @@ mod tests {
     fn u64_hb_64() {
         let t = SmolBitSet::from(0xC5C5_BEEF_0000_1234u64);
         assert!(!t.is_inline());
-        assert_eq!(t.len(), 2);
+        assert_eq!(t.len(), 1);
 
         let d = t.as_slice();
-        assert_eq!(d.len(), 2);
-        assert_eq!(d, [0x0000_1234, 0xC5C5_BEEF]);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d, [0xC5C5_BEEF_0000_1234]);
     }
 
     #[test]
-    fn u64_max() {
-        let t = SmolBitSet::from(u64::MAX);
+    fn u128_max() {
+        let t = SmolBitSet::from(u128::MAX);
         assert_eq!(t.len(), 2);
 
         let d = t.as_slice();
         assert_eq!(d.len(), 2);
-        assert_eq!(d, &[u32::MAX; 2]);
+        assert_eq!(d, &[u64::MAX as usize; 2]);
+    }
+
+    #[test]
+    fn parse() {
+        let sbs = "0".parse::<SmolBitSet>().unwrap();
+        assert_eq!(sbs, SmolBitSet::empty());
+
+        let sbs = "18446744073709551615".parse::<SmolBitSet>().unwrap();
+        assert_eq!(sbs, SmolBitSet::from(u64::MAX));
+
+        let sbs = "340282366920938463463374607431768211455"
+            .parse::<SmolBitSet>()
+            .unwrap();
+        assert_eq!(sbs, SmolBitSet::from(u128::MAX));
     }
 }

@@ -1,4 +1,4 @@
-use crate::{BST_BITS, SmolBitSet};
+use crate::{BITS, SmolBitSet};
 
 use core::ops::{Shl, ShlAssign, Shr, ShrAssign};
 
@@ -8,16 +8,13 @@ fn sbs_shl(sbs: &mut SmolBitSet, rhs: usize) {
     }
 
     if sbs.is_sparse() {
-        let flag = unsafe { sbs.get_inline_sparse_data_unchecked() };
-        let rhs = rhs
-            .try_into()
-            .expect("Cannot shift left by an amount larger than u32::MAX");
+        let flag = unsafe { sbs.get_sparse_data_unchecked() };
         let new_flag = flag
             .checked_add(rhs)
             .expect("Cannot shift left by an amount that causes overflow");
 
         unsafe {
-            sbs.write_inline_sparse_data_unchecked(new_flag);
+            sbs.write_sparse_data_unchecked(new_flag);
         }
 
         return;
@@ -38,7 +35,7 @@ fn sbs_shl(sbs: &mut SmolBitSet, rhs: usize) {
         let data = unsafe { sbs.as_slice_mut_unchecked() };
 
         // shifting further than one slice member?
-        let offset = rhs / BST_BITS;
+        let offset = rhs / BITS;
         if offset > 0 {
             for i in (0..data.len()).rev() {
                 data[i] = if let Some(src_idx) = i.checked_sub(offset) {
@@ -49,13 +46,13 @@ fn sbs_shl(sbs: &mut SmolBitSet, rhs: usize) {
             }
         }
 
-        let shift = rhs % BST_BITS;
+        let shift = rhs % BITS;
         if shift == 0 {
             // offset shifting was enough
             return;
         }
 
-        let carry_shift = BST_BITS - shift;
+        let carry_shift = BITS - shift;
         let mut carry = 0;
         for d in data.iter_mut() {
             let new = (*d << shift) | carry;
@@ -71,13 +68,12 @@ fn sbs_shr(sbs: &mut SmolBitSet, rhs: usize) {
     }
 
     if sbs.is_sparse() {
-        let flag = unsafe { sbs.get_inline_sparse_data_unchecked() };
-        let rhs = rhs.try_into().unwrap_or(u32::MAX);
+        let flag = unsafe { sbs.get_sparse_data_unchecked() };
         let new_flag = flag.checked_sub(rhs);
 
         match new_flag {
             Some(f) => unsafe {
-                sbs.write_inline_sparse_data_unchecked(f);
+                sbs.write_sparse_data_unchecked(f);
             },
             None => {
                 // bitset is now empty, switching to non-sparse inline representation
@@ -100,7 +96,7 @@ fn sbs_shr(sbs: &mut SmolBitSet, rhs: usize) {
         let data = unsafe { sbs.as_slice_mut_unchecked() };
 
         // shifting further than one slice member?
-        let offset = rhs / BST_BITS;
+        let offset = rhs / BITS;
         if offset > 0 {
             let len = data.len();
             for i in 0..len {
@@ -112,13 +108,13 @@ fn sbs_shr(sbs: &mut SmolBitSet, rhs: usize) {
             }
         }
 
-        let shift = rhs % BST_BITS;
+        let shift = rhs % BITS;
         if shift == 0 {
             // offset shifting was enough
             return;
         }
 
-        let carry_shift = BST_BITS - shift;
+        let carry_shift = BITS - shift;
         let mut carry = 0;
         for d in data.iter_mut().rev() {
             let new = (*d >> shift) | carry;
@@ -265,15 +261,12 @@ mod tests {
             assert!(a.is_inline());
 
             a <<= 8u8;
-            assert_eq!(a.len(), 2);
-            assert_eq!(a.as_slice(), [0x37BE_EF00u32, 0xABCD_5513u32]);
+            assert_eq!(a.len(), 1);
+            assert_eq!(a.as_slice(), [0xABCD_5513_37BE_EF00]);
 
             let b = a << 24u8;
-            assert_eq!(b.len(), 3);
-            assert_eq!(
-                b.as_slice(),
-                [0x0000_0000u32, 0x1337_BEEFu32, 0x00AB_CD55u32]
-            );
+            assert_eq!(b.len(), 2);
+            assert_eq!(b.as_slice(), [0x1337_BEEF_0000_0000, 0x00AB_CD55]);
         }
 
         #[test]
@@ -283,12 +276,12 @@ mod tests {
             assert!(!a.is_inline());
 
             a <<= 32u8;
-            assert_eq!(a.len(), 3);
-            assert_eq!(a.as_slice(), [0, 0xAFFE_BEEFu32, 0xFFEE_00AAu32]);
+            assert_eq!(a.len(), 2);
+            assert_eq!(a.as_slice(), [0xAFFE_BEEF_0000_0000, 0xFFEE_00AA]);
 
             a <<= 64u8;
-            assert_eq!(a.len(), 5);
-            assert_eq!(a.as_slice(), [0, 0, 0, 0xAFFE_BEEFu32, 0xFFEE_00AAu32]);
+            assert_eq!(a.len(), 3);
+            assert_eq!(a.as_slice(), [0, 0xAFFE_BEEF_0000_0000, 0xFFEE_00AA]);
         }
 
         #[test]
@@ -301,14 +294,14 @@ mod tests {
             a <<= 6u8;
             assert!(a.is_inline());
             assert!(a.is_sparse());
-            assert_eq!(unsafe { a.get_inline_sparse_data_unchecked() }, flag + 6);
+            assert_eq!(unsafe { a.get_sparse_data_unchecked() }, flag + 6);
 
             let b = a << u16::MAX;
             assert!(b.is_inline());
             assert!(b.is_sparse());
             assert_eq!(
-                unsafe { b.get_inline_sparse_data_unchecked() },
-                flag + 6 + u16::MAX as u32
+                unsafe { b.get_sparse_data_unchecked() },
+                flag + 6 + u16::MAX as usize
             );
         }
     }
@@ -342,15 +335,15 @@ mod tests {
             let val = 0xF420_1337_FEFE_BEEFu64;
             let mut a = SmolBitSet::from(val);
             assert!(!a.is_inline());
-            assert_eq!(a.len(), 2);
+            assert_eq!(a.len(), 1);
 
             a >>= 8u8;
             assert!(!a.is_inline());
-            assert_eq!(a.as_slice(), [0x37FE_FEBEu32, 0x00F4_2013u32]);
+            assert_eq!(a.as_slice(), [0x00F4_2013_37FE_FEBE]);
 
             let b = a >> 24u8;
             assert!(!b.is_inline());
-            assert_eq!(b.as_slice(), [0xF420_1337u32, 0x0000_0000u32]);
+            assert_eq!(b.as_slice(), [0xF420_1337]);
         }
 
         #[test]
@@ -360,18 +353,18 @@ mod tests {
             assert!(!a.is_inline());
 
             a >>= 32u8;
-            assert_eq!(a.len(), 2);
-            assert_eq!(a.as_slice(), [0xFFEE_00AAu32, 0]);
+            assert_eq!(a.len(), 1);
+            assert_eq!(a.as_slice(), [0xFFEE_00AA]);
 
             let mut a = SmolBitSet::from(val);
             a >>= 64u8;
-            assert_eq!(a.len(), 2);
-            assert_eq!(a.as_slice(), [0, 0]);
+            assert_eq!(a.len(), 1);
+            assert_eq!(a.as_slice(), [0]);
         }
 
         #[test]
         fn sparse_inline() {
-            let flag = u16::MAX as u32;
+            let flag = u16::MAX as usize;
             let mut a = SmolBitSet::flag(flag);
             assert!(a.is_inline());
             assert!(a.is_sparse());
@@ -380,7 +373,7 @@ mod tests {
             assert!(a.is_inline());
             assert!(a.is_sparse());
             assert_eq!(
-                unsafe { a.get_inline_sparse_data_unchecked() },
+                unsafe { a.get_sparse_data_unchecked() },
                 flag.saturating_sub(10)
             );
 
@@ -388,7 +381,7 @@ mod tests {
             assert!(b.is_inline());
             assert!(b.is_sparse());
             assert_eq!(
-                unsafe { b.get_inline_sparse_data_unchecked() },
+                unsafe { b.get_sparse_data_unchecked() },
                 flag.saturating_sub(10 + 420)
             );
 
@@ -404,16 +397,19 @@ mod tests {
         let val = 0xA5A5_BEEF_1337_A5A5u64;
         let mut a = SmolBitSet::from(val);
         assert!(!a.is_inline());
-        assert_eq!(a.len(), 2);
+        assert_eq!(a.len(), 1);
 
         a <<= 64u16 + 24u16;
         assert!(!a.is_inline());
-        assert_eq!(a.len(), 2 + 2 + 1);
-        assert_eq!(a.as_slice(), [0, 0, 0xA500_0000, 0xEF13_37A5, 0x00A5_A5BE]);
+        assert_eq!(a.len(), 3);
+        assert_eq!(a.as_slice(), [0, 0xEF13_37A5_A500_0000, 0x00A5_A5BE]);
 
         a >>= 32u32 + 16u32;
         assert!(!a.is_inline());
-        assert_eq!(a.len(), 2 + 2 + 1); // still same size, does not auto shrink
-        assert_eq!(a.as_slice(), [0, 0x37A5_A500, 0xA5BE_EF13, 0x0000_00A5, 0],);
+        assert_eq!(a.len(), 3); // still same size, does not auto shrink
+        assert_eq!(
+            a.as_slice(),
+            [0x37A5_A500_0000_0000, 0x0000_00A5_A5BE_EF13, 0],
+        );
     }
 }

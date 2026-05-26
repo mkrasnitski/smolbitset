@@ -29,7 +29,7 @@ impl Visitor<'_> for SmolBitSetVisitor {
     where
         E: serde::de::Error,
     {
-        v.parse().map_err(|()| E::custom("could not parse bitset"))
+        v.parse().map_err(|_| E::custom("could not parse bitset"))
     }
 
     visit_from!(

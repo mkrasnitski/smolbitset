@@ -1,4 +1,4 @@
-use crate::{BST_BITS, MAX_INLINE_BITS, SmolBitSet};
+use crate::{BITS, MAX_INLINE_BITS, SmolBitSet};
 
 use core::hash;
 
@@ -18,14 +18,9 @@ impl hash::Hash for SmolBitSet {
         let data = unsafe { self.as_slice_unchecked() };
 
         if hb <= MAX_INLINE_BITS {
-            #[cfg(target_pointer_width = "32")]
-            let val = data[0] as usize;
-            #[cfg(target_pointer_width = "64")]
-            let val = (data[1] as usize) << 32 | data[0] as usize;
-
-            val.hash(state);
+            data[0].hash(state);
         } else {
-            for d in data.iter().take(hb.div_ceil(BST_BITS)) {
+            for d in data.iter().take(hb.div_ceil(BITS)) {
                 d.hash(state);
             }
         }

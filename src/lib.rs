@@ -14,10 +14,10 @@
 //! Bitsets of small enough size are stored inline using a single `usize`, and otherwise are
 //! allocated on the heap.
 //!
-//! | Target Pointer Size | [`size_of::<SmolBitSet>`] | Inline Capacity |  Max Heap Capacity  |
-//! |--------------------:|--------------------------:|----------------:|--------------------:|
-//! | 32 bits             | 4 bytes                   | 30 bits         | 2^37 bits (~17.1GB) |
-//! | 64 bits             | 8 bytes                   | 62 bits         | 2^37 bits (~17.1GB) |
+//! | Target Pointer Size | [`size_of::<SmolBitSet>`] | Inline Capacity | Max Heap Capacity |
+//! |--------------------:|--------------------------:|----------------:|------------------:|
+//! | 32 bits             | 4 bytes                   | 30 bits         | 2^36 bits         |
+//! | 64 bits             | 8 bytes                   | 62 bits         | 2^68 bits         |
 //!
 //! Furthermore, [`SmolBitSet`] has a niche optimization so [`Option<SmolBitSet>`] has the same size
 //! as [`SmolBitSet`].
@@ -92,8 +92,6 @@ mod serde;
 #[cfg(feature = "typesize")]
 mod typesize;
 
-type BitSliceType = u32;
-
 /// How many bits are used for other purposes in the pointer which also determines
 /// the required alignment since we use the least significant bits for this header information.
 ///
@@ -107,22 +105,18 @@ const HEADER_SIZE: u32 = 2;
 
 enum Representation {
     NormalInline = 0b01,
-    /// Sparse has no way to represent an empty set so it gets switched to normal inline instead
     SparseInline = 0b11,
     NormalHeap = 0b00,
-    // SparseHeap = 0b10, // TODO: evaluate & implement sparse heap representation
 }
 
-const BST_BITS: usize = BitSliceType::BITS as usize;
-const INLINE_SLICE_PARTS: usize = usize::BITS as usize / BST_BITS;
+const BITS: usize = usize::BITS as usize;
 const MAX_INLINE_BITS: usize = (usize::BITS - HEADER_SIZE) as usize;
 const MAX_INLINE_VAL: usize = usize::MAX >> HEADER_SIZE;
-const MAX_INLINE_SPARSE_VAL: BitSliceType = (BitSliceType::MAX >> HEADER_SIZE) as BitSliceType;
 
 /// A dynamically sized bitset with memory usage optimizations.
 #[repr(transparent)]
 pub struct SmolBitSet {
-    ptr: NonNull<BitSliceType>,
+    ptr: NonNull<usize>,
 }
 
 impl SmolBitSet {
@@ -170,29 +164,31 @@ impl SmolBitSet {
         res
     }
 
-    /// Constructs a new sparse [`SmolBitSet`] from the provided `bit` index without any heap allocations.
+    /// Constructs a new [`SmolBitSet`] from the provided `bit` index without any heap allocations.
+    ///
+    /// The returned bitset will represent the value `1 << bit`.
     ///
     /// # Panics
     ///
-    /// Panics if `bit` is larger than <code>2^30</code>.
+    /// Panics if any of the 2 most significant bits in `bit` is 1.
     ///
     /// # Examples
     ///
     /// ```
     /// # use smolbitset::SmolBitSet;
     /// const sbs: SmolBitSet = SmolBitSet::flag(1234);
-    /// assert_eq!(sbs, SmolBitSet::flag(0) << 1234);
+    /// assert_eq!(sbs, SmolBitSet::from(1u64) << 1234);
     /// ```
     #[must_use]
-    pub const fn flag(bit: BitSliceType) -> Self {
+    pub const fn flag(bit: usize) -> Self {
         assert!(
-            bit <= MAX_INLINE_SPARSE_VAL,
+            bit <= MAX_INLINE_VAL,
             "bit index out of range for a non allocating sparse SmolBitSet"
         );
 
         let mut res = Self::empty();
         unsafe {
-            res.write_inline_sparse_data_unchecked(bit);
+            res.write_sparse_data_unchecked(bit);
         }
 
         res
@@ -281,8 +277,8 @@ impl SmolBitSet {
             let data = unsafe { res.as_slice_mut_unchecked() };
 
             for &bit in bits {
-                let s = bit % BST_BITS;
-                let b = bit / BST_BITS;
+                let s = bit % BITS;
+                let b = bit / BITS;
                 data[b] |= 1 << s;
             }
         }
@@ -326,15 +322,15 @@ impl SmolBitSet {
         matches!(self.representation(), Representation::SparseInline)
     }
 
-    unsafe fn get_inline_sparse_data_unchecked(&self) -> BitSliceType {
-        (self.ptr.addr().get() >> HEADER_SIZE) as BitSliceType
+    unsafe fn get_sparse_data_unchecked(&self) -> usize {
+        self.ptr.addr().get() >> HEADER_SIZE
     }
 
     #[inline]
-    const unsafe fn write_inline_sparse_data_unchecked(&mut self, data: BitSliceType) {
-        debug_assert!(data <= MAX_INLINE_SPARSE_VAL);
+    const unsafe fn write_sparse_data_unchecked(&mut self, data: usize) {
+        debug_assert!(data <= MAX_INLINE_VAL);
 
-        let addr = unsafe { NonZero::new_unchecked(((data as usize) << HEADER_SIZE) | 0b11) };
+        let addr = unsafe { NonZero::new_unchecked((data << HEADER_SIZE) | 0b11) };
         self.ptr = NonNull::without_provenance(addr);
     }
 
@@ -349,16 +345,16 @@ impl SmolBitSet {
 
     #[inline]
     const unsafe fn len_unchecked(&self) -> usize {
-        unsafe { *self.ptr.as_ptr() as usize }
+        unsafe { *self.ptr.as_ptr() }
     }
 
     #[inline]
-    const unsafe fn data_ptr_unchecked(&self) -> *mut BitSliceType {
+    const unsafe fn data_ptr_unchecked(&self) -> *mut usize {
         unsafe { self.ptr.as_ptr().add(1) }
     }
 
     #[inline]
-    fn as_slice(&self) -> &[BitSliceType] {
+    fn as_slice(&self) -> &[usize] {
         if self.is_inline() {
             return &[];
         }
@@ -367,12 +363,12 @@ impl SmolBitSet {
     }
 
     #[inline]
-    const unsafe fn as_slice_unchecked(&self) -> &[BitSliceType] {
+    const unsafe fn as_slice_unchecked(&self) -> &[usize] {
         unsafe { slice::from_raw_parts(self.data_ptr_unchecked(), self.len_unchecked()) }
     }
 
     #[inline]
-    fn as_slice_mut(&mut self) -> &mut [BitSliceType] {
+    fn as_slice_mut(&mut self) -> &mut [usize] {
         if self.is_inline() {
             return &mut [];
         }
@@ -381,7 +377,7 @@ impl SmolBitSet {
     }
 
     #[inline]
-    const unsafe fn as_slice_mut_unchecked(&mut self) -> &mut [BitSliceType] {
+    const unsafe fn as_slice_mut_unchecked(&mut self) -> &mut [usize] {
         unsafe { slice::from_raw_parts_mut(self.data_ptr_unchecked(), self.len_unchecked()) }
     }
 
@@ -395,7 +391,7 @@ impl SmolBitSet {
             "sparse heap representation is not implemented yet"
         );
 
-        let flag = unsafe { self.get_inline_sparse_data_unchecked() };
+        let flag = unsafe { self.get_sparse_data_unchecked() };
         Self::new_inline(1) << flag
     }
 
@@ -415,28 +411,22 @@ impl SmolBitSet {
     /// # Warning
     /// `highest_bit` is 1 indexed, so the least significant bit is 1, not 0!
     unsafe fn do_spill(&mut self, highest_bit: usize) {
-        let len = highest_bit.div_ceil(BST_BITS);
-        let len = core::cmp::max(len, INLINE_SLICE_PARTS);
+        let len = highest_bit.div_ceil(BITS);
 
         let layout = slice_layout(len);
         let ptr = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
-            alloc::alloc(layout).cast::<MaybeUninit<BitSliceType>>()
+            alloc::alloc(layout).cast::<MaybeUninit<usize>>()
         };
         if ptr.is_null() {
             handle_alloc_error(layout)
         }
 
         unsafe {
-            (*ptr).write(len as BitSliceType); // store the length in the first element
+            (*ptr).write(len); // store the length in the first element
             let old = self.get_inline_data_unchecked();
-
-            for i in 0..INLINE_SLICE_PARTS {
-                let data = (old >> (i * BST_BITS)) as BitSliceType;
-                (*ptr.add(1 + i)).write(data);
-            }
-
-            for i in INLINE_SLICE_PARTS..len {
+            (*ptr.add(1)).write(old);
+            for i in 1..len {
                 (*ptr.add(1 + i)).write(0);
             }
         };
@@ -457,7 +447,7 @@ impl SmolBitSet {
         }
 
         let len = unsafe { self.len_unchecked() };
-        if highest_bit < (BST_BITS * len) {
+        if highest_bit < (BITS * len) {
             return;
         }
 
@@ -470,7 +460,7 @@ impl SmolBitSet {
     /// `highest_bit` is 1 indexed, so the least significant bit is 1, not 0!
     unsafe fn do_grow(&mut self, len: usize, highest_bit: usize) {
         // we need to grow our slice allocation
-        let new_len = highest_bit.div_ceil(BST_BITS);
+        let new_len = highest_bit.div_ceil(BITS);
         debug_assert!(new_len >= len);
 
         let layout = slice_layout(len);
@@ -478,7 +468,7 @@ impl SmolBitSet {
         let new_ptr = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
             alloc::realloc(self.ptr.cast::<u8>().as_ptr(), layout, new_layout.size())
-                .cast::<BitSliceType>()
+                .cast::<usize>()
         };
         if new_ptr.is_null() {
             handle_alloc_error(new_layout)
@@ -489,7 +479,7 @@ impl SmolBitSet {
             slice::from_raw_parts_mut(new_ptr.add(1 + len), new_len - len).fill(0);
 
             // update the new length in the first element
-            *new_ptr = new_len as BitSliceType;
+            *new_ptr = new_len;
         }
         self.ptr = unsafe { NonNull::new_unchecked(new_ptr) };
     }
@@ -508,18 +498,15 @@ impl SmolBitSet {
             Representation::NormalHeap => {
                 let data = unsafe { self.as_slice_unchecked() };
                 for (idx, &data) in data.iter().enumerate().rev() {
-                    let h = highest_set_bit!(BitSliceType, data);
+                    let h = highest_set_bit!(usize, data);
                     if h != 0 {
-                        return (idx * BST_BITS) + h;
+                        return (idx * BITS) + h;
                     }
                 }
 
                 0
             }
-            Representation::SparseInline => {
-                let data = unsafe { self.get_inline_sparse_data_unchecked() };
-                data as usize + 1
-            }
+            Representation::SparseInline => unsafe { self.get_sparse_data_unchecked() + 1 },
         }
     }
 
@@ -533,12 +520,7 @@ impl SmolBitSet {
         }
 
         let data = unsafe { self.as_slice_unchecked() };
-        let mut start = 0usize;
-        for (idx, &chunk) in data.iter().enumerate().take(INLINE_SLICE_PARTS) {
-            start |= (chunk as usize) << (idx * BST_BITS);
-        }
-
-        start & (usize::MAX >> HEADER_SIZE)
+        data[0] & (usize::MAX >> HEADER_SIZE)
     }
 }
 
@@ -577,14 +559,14 @@ impl Clone for SmolBitSet {
         let layout = slice_layout(len);
         let ptr = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
-            alloc::alloc_zeroed(layout).cast::<BitSliceType>()
+            alloc::alloc_zeroed(layout).cast::<usize>()
         };
         if ptr.is_null() {
             handle_alloc_error(layout)
         }
 
         let new_data = unsafe {
-            *ptr = len as BitSliceType; // store the length in the first element
+            *ptr = len; // store the length in the first element
             slice::from_raw_parts_mut(ptr.add(1), len)
         };
         new_data.copy_from_slice(src);
@@ -608,8 +590,8 @@ fn slice_layout(len: usize) -> Layout {
         panic!("overflow error in SmolBitSet slice")
     }
 
-    const BST_SIZE: usize = size_of::<BitSliceType>();
-    const BST_ALIGN: usize = align_of::<BitSliceType>();
+    const BST_SIZE: usize = size_of::<usize>();
+    const BST_ALIGN: usize = align_of::<usize>();
     const HEADER_ALIGN: usize = 2usize.pow(HEADER_SIZE);
     const REQUIRED_ALIGN: usize = [BST_ALIGN, HEADER_ALIGN][(BST_ALIGN < HEADER_ALIGN) as usize];
     // core::cmp::max is not const yet :/
@@ -687,13 +669,13 @@ mod tests {
 
         t.ensure_capacity(max_inline + 1);
         assert!(!t.is_inline());
-        assert_eq!(t.len(), 2);
+        assert_eq!(t.len(), 1);
 
         t.ensure_capacity(65);
         assert!(!t.is_inline());
-        assert_eq!(t.len(), 3);
+        assert_eq!(t.len(), 2);
 
-        t.ensure_capacity(32 * 40);
+        t.ensure_capacity(64 * 40);
         assert!(!t.is_inline());
         assert_eq!(t.len(), 40);
     }
@@ -719,23 +701,22 @@ mod tests {
     fn set_get_slice() {
         let a = SmolBitSet::from(0xC5C5_BEEF_0000_1234u64);
         assert!(!a.is_inline());
-        assert_eq!(a.len(), 2);
+        assert_eq!(a.len(), 1);
 
         let d1 = a.as_slice();
-        assert_eq!(d1.len(), 2);
-        assert_eq!(d1, [0x_0000_1234, 0xC5C5_BEEF]);
+        assert_eq!(d1.len(), 1);
+        assert_eq!(d1, [0xC5C5_BEEF_0000_1234]);
 
         let mut b = a.clone();
         let d2 = b.as_slice_mut();
-        assert_eq!(d2.len(), 2);
+        assert_eq!(d2.len(), 1);
         assert_eq!(d2, d1);
 
-        d2[0] = 0xDEAD_BEEF;
-        d2[1] = 0xC0FF_EE00;
+        d2[0] = 0xC0FF_EE00_DEAD_BEEF;
 
         let d3 = b.as_slice();
-        assert_eq!(d3.len(), 2);
-        assert_eq!(d3, [0xDEAD_BEEF, 0xC0FF_EE00]);
+        assert_eq!(d3.len(), 1);
+        assert_eq!(d3, [0xC0FF_EE00_DEAD_BEEF]);
     }
 
     #[test]
@@ -745,30 +726,30 @@ mod tests {
 
         sbs.spill(30);
         assert!(!sbs.is_inline());
-        // expecting 2 since the inline data can hold 63 bits already
+        // expecting 1 since the inline data can hold 63 bits already
         // and spill will always allocate to at least store the inline data
-        assert_eq!(sbs.len(), 2);
+        assert_eq!(sbs.len(), 1);
 
         let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.spill(55);
         assert!(!sbs.is_inline());
-        assert_eq!(sbs.len(), 2);
+        assert_eq!(sbs.len(), 1);
 
         let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.spill(64);
         assert!(!sbs.is_inline());
-        assert_eq!(sbs.len(), 2);
+        assert_eq!(sbs.len(), 1);
 
         let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.spill(65);
         assert!(!sbs.is_inline());
-        assert_eq!(sbs.len(), 3);
+        assert_eq!(sbs.len(), 2);
     }
 
     #[test]
@@ -783,7 +764,7 @@ mod tests {
         assert!(!sbs.is_inline());
         assert_eq!(
             sbs.as_slice(),
-            [0x0000_A5A5, 0xEE00_BEEF, 0x0000_C0FF, 0xA5A5_1337]
+            [0xEE00_BEEF_0000_A5A5, 0xA5A5_1337_0000_C0FF]
         );
     }
 
@@ -831,7 +812,7 @@ mod tests {
             let b_data = b.as_slice();
             assert_eq!(a_data.len(), b_data.len());
             assert_eq!(a_data, b_data);
-            assert_eq!(a_data, [0x1337_0420, 0xFFEE_00AA]);
+            assert_eq!(a_data, [0xFFEE_00AA_1337_0420]);
         }
     }
 }
