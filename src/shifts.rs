@@ -262,11 +262,11 @@ mod tests {
 
             a <<= 8u8;
             assert_eq!(a.len(), 1);
-            assert_eq!(a.as_slice(), [0xABCD_5513_37BE_EF00]);
+            assert_eq!(a.data().as_ref(), [0xABCD_5513_37BE_EF00]);
 
             let b = a << 24u8;
             assert_eq!(b.len(), 2);
-            assert_eq!(b.as_slice(), [0x1337_BEEF_0000_0000, 0x00AB_CD55]);
+            assert_eq!(b.data().as_ref(), [0x1337_BEEF_0000_0000, 0x00AB_CD55]);
         }
 
         #[test]
@@ -277,11 +277,11 @@ mod tests {
 
             a <<= 32u8;
             assert_eq!(a.len(), 2);
-            assert_eq!(a.as_slice(), [0xAFFE_BEEF_0000_0000, 0xFFEE_00AA]);
+            assert_eq!(a.data().as_ref(), [0xAFFE_BEEF_0000_0000, 0xFFEE_00AA]);
 
             a <<= 64u8;
             assert_eq!(a.len(), 3);
-            assert_eq!(a.as_slice(), [0, 0xAFFE_BEEF_0000_0000, 0xFFEE_00AA]);
+            assert_eq!(a.data().as_ref(), [0, 0xAFFE_BEEF_0000_0000, 0xFFEE_00AA]);
         }
 
         #[test]
@@ -339,11 +339,11 @@ mod tests {
 
             a >>= 8u8;
             assert!(!a.is_inline());
-            assert_eq!(a.as_slice(), [0x00F4_2013_37FE_FEBE]);
+            assert_eq!(a.data().as_ref(), [0x00F4_2013_37FE_FEBE]);
 
             let b = a >> 24u8;
             assert!(!b.is_inline());
-            assert_eq!(b.as_slice(), [0xF420_1337]);
+            assert_eq!(b.data().as_ref(), [0xF420_1337]);
         }
 
         #[test]
@@ -354,12 +354,12 @@ mod tests {
 
             a >>= 32u8;
             assert_eq!(a.len(), 1);
-            assert_eq!(a.as_slice(), [0xFFEE_00AA]);
+            assert_eq!(a.data().as_ref(), [0xFFEE_00AA]);
 
             let mut a = SmolBitSet::from(val);
             a >>= 64u8;
             assert_eq!(a.len(), 1);
-            assert_eq!(a.as_slice(), [0]);
+            assert_eq!(a.data().as_ref(), [0]);
         }
 
         #[test]
@@ -402,13 +402,13 @@ mod tests {
         a <<= 64u16 + 24u16;
         assert!(!a.is_inline());
         assert_eq!(a.len(), 3);
-        assert_eq!(a.as_slice(), [0, 0xEF13_37A5_A500_0000, 0x00A5_A5BE]);
+        assert_eq!(a.data().as_ref(), [0, 0xEF13_37A5_A500_0000, 0x00A5_A5BE]);
 
         a >>= 32u32 + 16u32;
         assert!(!a.is_inline());
         assert_eq!(a.len(), 3); // still same size, does not auto shrink
         assert_eq!(
-            a.as_slice(),
+            a.data().as_ref(),
             [0x37A5_A500_0000_0000, 0x0000_00A5_A5BE_EF13, 0],
         );
     }

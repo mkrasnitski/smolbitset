@@ -1,4 +1,4 @@
-use crate::{BITS, MAX_INLINE_BITS, SmolBitSet};
+use crate::{BITS, SmolBitSet};
 
 use core::hash;
 
@@ -9,20 +9,12 @@ impl hash::Hash for SmolBitSet {
             return;
         }
 
-        if self.is_inline() {
-            unsafe { self.get_inline_data_unchecked() }.hash(state);
-            return;
-        }
-
-        let hb = self.highest_set_bit();
-        let data = unsafe { self.as_slice_unchecked() };
-
-        if hb <= MAX_INLINE_BITS {
-            data[0].hash(state);
-        } else {
-            for d in data.iter().take(hb.div_ceil(BITS)) {
-                d.hash(state);
-            }
+        for d in self
+            .data()
+            .iter()
+            .take(self.highest_set_bit().div_ceil(BITS))
+        {
+            d.hash(state);
         }
     }
 }

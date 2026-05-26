@@ -58,10 +58,16 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc as extern_alloc;
 #[cfg(not(feature = "std"))]
-use extern_alloc::alloc::{self, Layout, handle_alloc_error};
+use extern_alloc::{
+    alloc::{self, Layout, handle_alloc_error},
+    borrow::Cow,
+    vec,
+};
 
 #[cfg(feature = "std")]
 use std::alloc::{self, Layout, handle_alloc_error};
+#[cfg(feature = "std")]
+use std::borrow::Cow;
 
 use core::convert::Infallible;
 use core::mem::MaybeUninit;
@@ -79,7 +85,6 @@ macro_rules! highest_set_bit {
 }
 
 mod bitop;
-mod bst_slice;
 mod cmp;
 mod fmt;
 mod from;
@@ -353,27 +358,20 @@ impl SmolBitSet {
         unsafe { self.ptr.as_ptr().add(1) }
     }
 
-    #[inline]
-    fn as_slice(&self) -> &[usize] {
+    /// Returns the underlying data of the [`SmolBitSet`] split into individual [`usize`] blocks.
+    #[must_use]
+    pub fn data(&self) -> Cow<'_, [usize]> {
         if self.is_inline() {
-            return &[];
+            let data = unsafe { self.get_inline_data_unchecked() };
+            vec![data].into()
+        } else {
+            unsafe { self.as_slice_unchecked().into() }
         }
-
-        unsafe { self.as_slice_unchecked() }
     }
 
     #[inline]
     const unsafe fn as_slice_unchecked(&self) -> &[usize] {
         unsafe { slice::from_raw_parts(self.data_ptr_unchecked(), self.len_unchecked()) }
-    }
-
-    #[inline]
-    fn as_slice_mut(&mut self) -> &mut [usize] {
-        if self.is_inline() {
-            return &mut [];
-        }
-
-        unsafe { self.as_slice_mut_unchecked() }
     }
 
     #[inline]
@@ -508,19 +506,6 @@ impl SmolBitSet {
             }
             Representation::SparseInline => unsafe { self.get_sparse_data_unchecked() + 1 },
         }
-    }
-
-    /// Gets the starting bits that could be stored inlined.
-    fn get_inlineable_start(&self) -> usize {
-        debug_assert!(!self.is_sparse());
-
-        if self.is_inline() {
-            let data = unsafe { self.get_inline_data_unchecked() };
-            return data;
-        }
-
-        let data = unsafe { self.as_slice_unchecked() };
-        data[0] & (usize::MAX >> HEADER_SIZE)
     }
 }
 
@@ -703,20 +688,21 @@ mod tests {
         assert!(!a.is_inline());
         assert_eq!(a.len(), 1);
 
-        let d1 = a.as_slice();
+        let d1 = a.data();
         assert_eq!(d1.len(), 1);
-        assert_eq!(d1, [0xC5C5_BEEF_0000_1234]);
+        assert_eq!(d1.as_ref(), [0xC5C5_BEEF_0000_1234]);
 
         let mut b = a.clone();
-        let d2 = b.as_slice_mut();
+        let d2 = b.data();
         assert_eq!(d2.len(), 1);
-        assert_eq!(d2, d1);
+        assert_eq!(d2, d1.as_ref());
 
-        d2[0] = 0xC0FF_EE00_DEAD_BEEF;
+        b &= 0u64;
+        b |= 0xC0FF_EE00_DEAD_BEEFu64;
 
-        let d3 = b.as_slice();
+        let d3 = b.data();
         assert_eq!(d3.len(), 1);
-        assert_eq!(d3, [0xC0FF_EE00_DEAD_BEEF]);
+        assert_eq!(d3.as_ref(), [0xC0FF_EE00_DEAD_BEEF]);
     }
 
     #[test]
@@ -763,7 +749,7 @@ mod tests {
             SmolBitSet::try_from(String::from("220179738009501684669546686565819917733")).unwrap();
         assert!(!sbs.is_inline());
         assert_eq!(
-            sbs.as_slice(),
+            sbs.data().as_ref(),
             [0xEE00_BEEF_0000_A5A5, 0xA5A5_1337_0000_C0FF]
         );
     }
@@ -808,11 +794,11 @@ mod tests {
             assert!(!a.is_inline());
             assert!(!b.is_inline());
 
-            let a_data = a.as_slice();
-            let b_data = b.as_slice();
+            let a_data = a.data();
+            let b_data = b.data();
             assert_eq!(a_data.len(), b_data.len());
             assert_eq!(a_data, b_data);
-            assert_eq!(a_data, [0xFFEE_00AA_1337_0420]);
+            assert_eq!(a_data.as_ref(), [0xFFEE_00AA_1337_0420]);
         }
     }
 }

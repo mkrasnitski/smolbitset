@@ -115,9 +115,9 @@ mod tests {
         assert!(!t.is_inline());
         assert_eq!(t.len(), 1);
 
-        let d = t.as_slice();
+        let d = t.data();
         assert_eq!(d.len(), 1);
-        assert_eq!(d, [0xC5C5_BEEF_0000_1234]);
+        assert_eq!(d.as_ref(), [0xC5C5_BEEF_0000_1234]);
     }
 
     #[test]
@@ -125,9 +125,9 @@ mod tests {
         let t = SmolBitSet::from(u128::MAX);
         assert_eq!(t.len(), 2);
 
-        let d = t.as_slice();
+        let d = t.data();
         assert_eq!(d.len(), 2);
-        assert_eq!(d, &[u64::MAX as usize; 2]);
+        assert_eq!(d.as_ref(), &[u64::MAX as usize; 2]);
     }
 
     #[test]

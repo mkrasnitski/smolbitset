@@ -1,4 +1,3 @@
-use crate::bst_slice::BstSlice;
 use crate::{BITS, Representation, SmolBitSet};
 
 use core::iter;
@@ -26,8 +25,7 @@ macro_rules! shortening_bitop_fn_body {
                 let target_elem = lhs_flag / BITS;
                 let target_shift = lhs_flag % BITS;
 
-                let rhs_bst = BstSlice::new($rhs);
-                let rhs_slice = rhs_bst.slice();
+                let rhs_slice = $rhs.data();
                 let rhs_elem = rhs_slice.iter().nth(target_elem).unwrap_or(&0);
                 let rhs_flag = ((rhs_elem >> target_shift) & 1) * lhs_flag;
 
@@ -46,8 +44,7 @@ macro_rules! shortening_bitop_fn_body {
                 let target_elem = rhs_flag / BITS;
                 let target_shift = rhs_flag % BITS;
 
-                let lhs_bst = BstSlice::new($lhs);
-                let lhs_slice = lhs_bst.slice();
+                let lhs_slice = $lhs.data();
                 let lhs_elem = lhs_slice.iter().nth(target_elem).unwrap_or(&0);
                 let lhs_flag = ((lhs_elem >> target_shift) & 1) * rhs_flag;
 
@@ -75,7 +72,7 @@ macro_rules! shortening_bitop_fn_body {
                 Representation::NormalInline | Representation::NormalHeap,
             ) => unsafe {
                 let mut lhs = $lhs.get_inline_data_unchecked();
-                let rhs = $rhs.get_inlineable_start();
+                let rhs = $rhs.data()[0];
                 $opa(&mut lhs, rhs);
                 $lhs.write_inline_data_unchecked(lhs);
             },
@@ -301,7 +298,6 @@ impl SmolBitSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bst_slice::BstSlice;
 
     #[cfg(not(feature = "std"))]
     use extern_alloc::vec::Vec;
@@ -315,10 +311,6 @@ mod tests {
         fn and_not(self, rhs: Self) -> Self {
             self & !rhs
         }
-    }
-
-    fn to_bst_vec(sbs: &SmolBitSet) -> Vec<usize> {
-        BstSlice::new(sbs).slice().to_vec()
     }
 
     fn zero_pad_to(mut vec: Vec<usize>, len: usize) -> Vec<usize> {
@@ -374,7 +366,7 @@ mod tests {
 
                         let res = a.$name(&b);
                         assert_eq!(res.len(), 1);
-                        assert_eq!(res.as_slice(), [($a as usize).$name($b as usize)]);
+                        assert_eq!(res.data().as_ref(), [($a as usize).$name($b as usize)]);
                     }
                 )*}
             }
@@ -400,7 +392,7 @@ mod tests {
                         assert_eq!(b.len(), 1);
 
                         let res1 = a.clone().$name(&b);
-                        assert_eq!(to_bst_vec(&res1), [($a as usize).$name($b as usize)]);
+                        assert_eq!(res1.data().as_ref(), [($a as usize).$name($b as usize)]);
 
                         let res2 = b.$name(&a);
                         assert_eq!(res2, res1);
@@ -426,7 +418,7 @@ mod tests {
                 assert_eq!(b.len(), 1);
 
                 let res1 = a.and_not(&b);
-                assert_eq!(to_bst_vec(&res1), [(A as usize).and_not(B as usize)]);
+                assert_eq!(res1.data().as_ref(), [(A as usize).and_not(B as usize)]);
             }
         }
 
@@ -445,7 +437,7 @@ mod tests {
 
                         let res = lhs.$name(&rhs);
                         assert_eq!(
-                            to_bst_vec(&res),
+                            res.data().as_ref(),
                             [
                                 ((($a << 32) as usize).$name($b as usize)),
                                 ((($a >> 32) as usize).$name(0 as usize))
@@ -478,7 +470,7 @@ mod tests {
 
                         let res = lhs.$name(&rhs);
                         assert_eq!(
-                            zero_pad_to(to_bst_vec(&res), 2),
+                            zero_pad_to(res.data().into_owned(), 2),
                             [
                                 (($a as usize).$name(($b << 32) as usize)),
                                 ((0 as usize).$name(($b >> 32) as usize))

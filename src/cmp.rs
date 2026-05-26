@@ -1,24 +1,9 @@
-use crate::bst_slice::BstSlice;
 use crate::{Representation, SmolBitSet};
 
 use core::{cmp, iter};
 
 impl cmp::PartialEq for SmolBitSet {
     fn eq(&self, other: &Self) -> bool {
-        fn inner(this: &BstSlice<'_>, other: &BstSlice<'_>) -> bool {
-            let this = this.slice();
-            let other = other.slice();
-
-            let (long, short) = if this.len() >= other.len() {
-                (this, other)
-            } else {
-                (other, this)
-            };
-
-            let (prefix, suffix) = long.split_at(short.len());
-            prefix == short && suffix.iter().all(|&x| x == 0)
-        }
-
         match (self.representation(), other.representation()) {
             (Representation::SparseInline, Representation::SparseInline) => {
                 let this = unsafe { self.get_sparse_data_unchecked() };
@@ -28,25 +13,27 @@ impl cmp::PartialEq for SmolBitSet {
             (
                 Representation::SparseInline,
                 Representation::NormalInline | Representation::NormalHeap,
-            ) => {
-                let normalized_self = self.as_normal();
-                let this = BstSlice::new(&normalized_self);
-                let other = BstSlice::new(other);
-                inner(&this, &other)
-            }
+            ) => self.as_normal() == *other,
             (
                 Representation::NormalInline | Representation::NormalHeap,
                 Representation::SparseInline,
-            ) => {
-                let normalized_other = other.as_normal();
-                let this = BstSlice::new(self);
-                let other = BstSlice::new(&normalized_other);
-                inner(&this, &other)
-            }
+            ) => *self == other.as_normal(),
             (
                 Representation::NormalHeap | Representation::NormalInline,
                 Representation::NormalHeap | Representation::NormalInline,
-            ) => inner(&BstSlice::new(self), &BstSlice::new(other)),
+            ) => {
+                let this = self.data();
+                let other = other.data();
+
+                let (long, short) = if this.len() >= other.len() {
+                    (this, other)
+                } else {
+                    (other, this)
+                };
+
+                let (prefix, suffix) = long.split_at(short.len());
+                prefix == short.as_ref() && suffix.iter().all(|&x| x == 0)
+            }
         }
     }
 }
@@ -77,17 +64,6 @@ impl cmp::Ord for SmolBitSet {
             cmp::Ordering::Equal
         }
 
-        fn inner(this: &BstSlice<'_>, other: &BstSlice<'_>) -> cmp::Ordering {
-            let this = this.slice();
-            let other = other.slice();
-
-            if this.len() >= other.len() {
-                slice_cmp(this, other)
-            } else {
-                slice_cmp(other, this).reverse()
-            }
-        }
-
         match (self.representation(), other.representation()) {
             (Representation::SparseInline, Representation::SparseInline) => {
                 let this = unsafe { self.get_sparse_data_unchecked() };
@@ -97,25 +73,24 @@ impl cmp::Ord for SmolBitSet {
             (
                 Representation::SparseInline,
                 Representation::NormalInline | Representation::NormalHeap,
-            ) => {
-                let normalized_self = self.as_normal();
-                let this = BstSlice::new(&normalized_self);
-                let other = BstSlice::new(other);
-                inner(&this, &other)
-            }
+            ) => self.as_normal().cmp(other),
             (
                 Representation::NormalInline | Representation::NormalHeap,
                 Representation::SparseInline,
-            ) => {
-                let normalized_other = other.as_normal();
-                let this = BstSlice::new(self);
-                let other = BstSlice::new(&normalized_other);
-                inner(&this, &other)
-            }
+            ) => self.cmp(&other.as_normal()),
             (
                 Representation::NormalHeap | Representation::NormalInline,
                 Representation::NormalHeap | Representation::NormalInline,
-            ) => inner(&BstSlice::new(self), &BstSlice::new(other)),
+            ) => {
+                let this = self.data();
+                let other = other.data();
+
+                if this.len() >= other.len() {
+                    slice_cmp(this.as_ref(), other.as_ref())
+                } else {
+                    slice_cmp(other.as_ref(), this.as_ref()).reverse()
+                }
+            }
         }
     }
 }

@@ -1,4 +1,3 @@
-use crate::bst_slice::BstSlice;
 use crate::{BITS, SmolBitSet};
 
 use core::fmt;
@@ -14,7 +13,7 @@ impl Debug for SmolBitSet {
             return Debug::fmt(&self.as_normal(), f);
         }
 
-        f.debug_list().entries(BstSlice::new(self).slice()).finish()
+        f.debug_list().entries(self.data().iter()).finish()
     }
 }
 
@@ -24,10 +23,10 @@ impl Display for SmolBitSet {
             return Display::fmt(&self.as_normal(), f);
         }
 
-        if self.is_inline() {
-            write!(f, "{}", unsafe { self.get_inline_data_unchecked() })
+        let slice = self.data();
+        if slice.len() == 1 {
+            write!(f, "{}", slice[0])
         } else {
-            let slice = unsafe { self.as_slice_unchecked() };
             let bytes = slice
                 .iter()
                 .flat_map(|block| block.to_le_bytes().into_iter())
@@ -45,18 +44,11 @@ macro_rules! impl_format {
                     return $kind::fmt(&self.as_normal(), f);
                 }
 
-                if self.is_inline() {
-                    return $kind::fmt(&unsafe { self.get_inline_data_unchecked() }, f);
-                }
-
-                let data = unsafe { self.as_slice_unchecked() };
                 let highest = self.highest_set_bit().saturating_sub(1).div_ceil(BITS);
 
                 let mut full_width = false;
-                for idx in (0..highest).rev() {
+                for d in self.data().iter().take(highest).rev() {
                     const PADDING: usize = BITS / ($variants as u8).ilog2() as usize;
-
-                    let d = data[idx];
 
                     if full_width {
                         write!(f, concat!("{d:0PADDING$", $format, "}"), d = d, PADDING = PADDING)?;
