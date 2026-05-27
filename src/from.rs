@@ -11,7 +11,7 @@ macro_rules! impl_from {
         impl From<$t> for SmolBitSet {
             fn from(value: $t) -> Self {
                 let mut sbs = SmolBitSet::empty();
-                sbs.ensure_capacity(highest_set_bit!($t, value));
+                sbs.ensure_capacity(highest_set_bit!($t, value).map_or(0, |b| b + 1));
 
                 if sbs.is_inline() {
                     unsafe { sbs.write_inline_data_unchecked(value as usize) };

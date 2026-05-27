@@ -21,8 +21,8 @@ impl SmolBitSet {
             return;
         }
 
-        let hb: usize = self.highest_set_bit();
-        self.ensure_capacity(hb + rhs);
+        let current_capacity = self.highest_set_bit().unwrap_or_default() + 1;
+        self.ensure_capacity(current_capacity + rhs);
 
         if self.is_inline() {
             unsafe {

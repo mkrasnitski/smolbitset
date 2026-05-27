@@ -146,7 +146,7 @@ macro_rules! extending_bitop_fn_body {
             ) => {
                 let rhs_hb = $rhs.highest_set_bit();
                 if rhs_hb > $lhs.highest_set_bit() {
-                    $lhs.ensure_capacity(rhs_hb);
+                    $lhs.ensure_capacity(rhs_hb.unwrap_or_default() + 1);
                 }
 
                 let lhs = unsafe { $lhs.as_slice_mut_unchecked() };

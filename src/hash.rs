@@ -9,11 +9,8 @@ impl hash::Hash for SmolBitSet {
             return;
         }
 
-        for d in self
-            .data()
-            .iter()
-            .take(self.highest_set_bit().div_ceil(BITS))
-        {
+        let cap = self.highest_set_bit().unwrap_or_default() + 1;
+        for d in self.data().iter().take(cap.div_ceil(BITS)) {
             d.hash(state);
         }
     }

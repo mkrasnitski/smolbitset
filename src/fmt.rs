@@ -40,18 +40,18 @@ macro_rules! impl_format {
     ($($kind:ident $format:literal $variants:literal),+) => {$(
         impl $kind for SmolBitSet {
             fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                const PAD: usize = BITS / ($variants as u8).ilog2() as usize;
+
                 if self.is_sparse() {
                     return $kind::fmt(&self.as_normal(), f);
                 }
 
-                let highest = self.highest_set_bit().saturating_sub(1).div_ceil(BITS);
+                let cap = self.highest_set_bit().unwrap_or_default() + 1;
 
                 let mut full_width = false;
-                for d in self.data().iter().take(highest).rev() {
-                    const PADDING: usize = BITS / ($variants as u8).ilog2() as usize;
-
+                for d in self.data().iter().take(cap.div_ceil(BITS)).rev() {
                     if full_width {
-                        write!(f, concat!("{d:0PADDING$", $format, "}"), d = d, PADDING = PADDING)?;
+                        write!(f, concat!("{:0PADDING$", $format, "}"), d, PADDING = PAD)?;
                     } else {
                         full_width = true;
                         $kind::fmt(&d, f)?;

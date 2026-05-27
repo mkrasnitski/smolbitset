@@ -69,18 +69,14 @@ use std::alloc::{self, Layout, handle_alloc_error};
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
-use core::convert::Infallible;
-use core::mem::MaybeUninit;
 use core::num::NonZero;
 use core::ptr::NonNull;
 use core::slice;
 
 /// Returns the index of the most significant bit set to 1 in the given data.
-///
-/// The least significant bit is at index 1!
 macro_rules! highest_set_bit {
     ($t:ty, $val:expr) => {
-        (<$t>::BITS - $val.leading_zeros()) as usize
+        core::num::NonZero::new($val).map(|v| (<$t>::BITS - 1 - v.leading_zeros()) as usize)
     };
 }
 
@@ -393,80 +389,58 @@ impl SmolBitSet {
         Self::new_inline(1) << flag
     }
 
-    /// # Warning
-    /// `highest_bit` is 1 indexed, so the least significant bit is 1, not 0!
     #[inline]
-    fn spill(&mut self, highest_bit: usize) {
+    fn spill(&mut self, capacity: usize) {
         if !self.is_inline() {
             return;
         }
 
-        unsafe {
-            self.do_spill(highest_bit);
-        }
-    }
+        let len = capacity.div_ceil(BITS);
 
-    /// # Warning
-    /// `highest_bit` is 1 indexed, so the least significant bit is 1, not 0!
-    unsafe fn do_spill(&mut self, highest_bit: usize) {
-        let len = highest_bit.div_ceil(BITS);
-
-        let layout = slice_layout(len);
+        let layout = create_layout(len);
         let ptr = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
-            alloc::alloc(layout).cast::<MaybeUninit<usize>>()
+            alloc::alloc(layout).cast::<usize>()
         };
         if ptr.is_null() {
             handle_alloc_error(layout)
         }
 
         unsafe {
-            (*ptr).write(len); // store the length in the first element
+            *ptr = len; // store the length in the first element
             let old = self.get_inline_data_unchecked();
-            (*ptr.add(1)).write(old);
-            for i in 1..len {
-                (*ptr.add(1 + i)).write(0);
-            }
+            *ptr.add(1) = old;
+
+            slice::from_raw_parts_mut(ptr.add(2), len - 1).fill(0);
         };
 
-        self.ptr = unsafe { NonNull::new_unchecked(ptr.cast()) };
+        self.ptr = unsafe { NonNull::new_unchecked(ptr) };
     }
 
-    /// # Warning
-    /// `highest_bit` is 1 indexed, so the least significant bit is 1, not 0!
     #[inline]
-    fn ensure_capacity(&mut self, highest_bit: usize) {
+    fn ensure_capacity(&mut self, capacity: usize) {
         if self.is_inline() {
-            if highest_bit > MAX_INLINE_BITS {
-                unsafe { self.do_spill(highest_bit) }
+            if capacity > MAX_INLINE_BITS {
+                self.spill(capacity)
             }
-
-            return;
-        }
-
-        let len = unsafe { self.len_unchecked() };
-        if highest_bit < (BITS * len) {
-            return;
-        }
-
-        unsafe {
-            self.do_grow(len, highest_bit);
+        } else {
+            let len = unsafe { self.len_unchecked() };
+            if capacity >= (BITS * len) {
+                unsafe { self.grow(len, capacity) }
+            }
         }
     }
 
-    /// # Warning
-    /// `highest_bit` is 1 indexed, so the least significant bit is 1, not 0!
-    unsafe fn do_grow(&mut self, len: usize, highest_bit: usize) {
+    unsafe fn grow(&mut self, len: usize, capacity: usize) {
         // we need to grow our slice allocation
-        let new_len = highest_bit.div_ceil(BITS);
+        let new_len = capacity.div_ceil(BITS);
         debug_assert!(new_len >= len);
 
-        let layout = slice_layout(len);
-        let new_layout = slice_layout(new_len);
+        let layout = create_layout(len);
+        let new_layout = create_layout(new_len);
         let new_ptr = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
-            alloc::realloc(self.ptr.cast::<u8>().as_ptr(), layout, new_layout.size())
-                .cast::<usize>()
+            alloc::realloc(self.ptr.as_ptr().cast(), layout, new_layout.size()).cast::<usize>()
         };
         if new_ptr.is_null() {
             handle_alloc_error(new_layout)
@@ -483,11 +457,8 @@ impl SmolBitSet {
     }
 
     /// Returns the index of the most significant bit set to 1.
-    ///
-    /// # Warning
-    /// The least significant bit is at index 1!
     #[inline]
-    fn highest_set_bit(&self) -> usize {
+    fn highest_set_bit(&self) -> Option<usize> {
         match self.representation() {
             Representation::NormalInline => {
                 let data = unsafe { self.get_inline_data_unchecked() };
@@ -496,15 +467,14 @@ impl SmolBitSet {
             Representation::NormalHeap => {
                 let data = unsafe { self.as_slice_unchecked() };
                 for (idx, &data) in data.iter().enumerate().rev() {
-                    let h = highest_set_bit!(usize, data);
-                    if h != 0 {
-                        return (idx * BITS) + h;
+                    if let Some(h) = highest_set_bit!(usize, data) {
+                        return Some((idx * BITS) + h);
                     }
                 }
 
-                0
+                None
             }
-            Representation::SparseInline => unsafe { self.get_sparse_data_unchecked() + 1 },
+            Representation::SparseInline => unsafe { Some(self.get_sparse_data_unchecked()) },
         }
     }
 }
@@ -517,7 +487,7 @@ impl Drop for SmolBitSet {
         }
 
         unsafe {
-            let layout = slice_layout(self.len_unchecked());
+            let layout = create_layout(self.len_unchecked());
             alloc::dealloc(self.ptr.cast::<u8>().as_ptr(), layout);
         }
     }
@@ -541,7 +511,7 @@ impl Clone for SmolBitSet {
 
         let src = unsafe { self.as_slice_unchecked() };
         let len = src.len();
-        let layout = slice_layout(len);
+        let layout = create_layout(len);
         let ptr = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
             alloc::alloc_zeroed(layout).cast::<usize>()
@@ -562,37 +532,23 @@ impl Clone for SmolBitSet {
 }
 
 #[inline]
-fn slice_layout(len: usize) -> Layout {
-    #[cold]
-    #[inline(never)]
-    fn layout_err() -> Infallible {
-        panic!("layout error in SmolBitSet slice")
+fn create_layout(len: usize) -> Layout {
+    assert!(
+        len.checked_mul(size_of::<usize>()).is_some(),
+        "overflow error in SmolBitSet slice"
+    );
+
+    if let Ok(layout) = Layout::array::<usize>(len + 1)
+        // Ensure the address of our allocation will have all 0s in the header bits so that
+        // `SmolBitSet::representation` will return `Representation::NormalHeap`. As it stands,
+        // `align_of::<usize>()` is the same as `size_of::<usize>` and this is a no-op, but
+        // better to be explicit.
+        && let Ok(layout) = layout.align_to(1 << HEADER_SIZE)
+    {
+        return layout;
     }
 
-    #[cold]
-    #[inline(never)]
-    fn overflow_err() -> Infallible {
-        panic!("overflow error in SmolBitSet slice")
-    }
-
-    const BST_SIZE: usize = size_of::<usize>();
-    const BST_ALIGN: usize = align_of::<usize>();
-    const HEADER_ALIGN: usize = 2usize.pow(HEADER_SIZE);
-    const REQUIRED_ALIGN: usize = [BST_ALIGN, HEADER_ALIGN][(BST_ALIGN < HEADER_ALIGN) as usize];
-    // core::cmp::max is not const yet :/
-
-    let len = len + 1; // +1 for the length since we store the length in the first element
-    let Some(size) = BST_SIZE.checked_mul(len) else {
-        #[allow(unreachable_code)]
-        match overflow_err() {}
-    };
-
-    let Ok(layout) = Layout::from_size_align(size, REQUIRED_ALIGN) else {
-        #[allow(unreachable_code)]
-        match layout_err() {}
-    };
-
-    layout
+    panic!("invalid layout when allocating SmolBitSet");
 }
 
 #[cfg(test)]
@@ -619,22 +575,22 @@ mod tests {
     #[test]
     fn check_highest_set_bit() {
         let mut t: u64 = 0;
-        assert_eq!(highest_set_bit!(u64, t), 0);
+        assert_eq!(highest_set_bit!(u64, t), None);
 
         t = 1;
-        assert_eq!(highest_set_bit!(u64, t), 1);
+        assert_eq!(highest_set_bit!(u64, t), Some(0));
 
         t = 1 << 3;
-        assert_eq!(highest_set_bit!(u64, t), 4);
+        assert_eq!(highest_set_bit!(u64, t), Some(3));
 
         t = 1 << 31;
-        assert_eq!(highest_set_bit!(u64, t), 32);
+        assert_eq!(highest_set_bit!(u64, t), Some(31));
 
         t = 0b10101;
-        assert_eq!(highest_set_bit!(u64, t), 5);
+        assert_eq!(highest_set_bit!(u64, t), Some(4));
 
         t = u64::MAX;
-        assert_eq!(highest_set_bit!(u64, t), 64);
+        assert_eq!(highest_set_bit!(u64, t), Some(63));
     }
 
     #[test]
