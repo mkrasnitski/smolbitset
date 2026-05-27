@@ -6,7 +6,7 @@ use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, 
 macro_rules! shortening_bitop_fn_body {
     ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:expr, $self_op:ident) => {
         match ($lhs.representation(), $rhs.representation()) {
-            (Representation::SparseInline, Representation::SparseInline) => unsafe {
+            (Representation::Sparse, Representation::Sparse) => unsafe {
                 let lhs_flag = $lhs.get_sparse_data_unchecked();
                 let rhs_flag = $rhs.get_sparse_data_unchecked();
 
@@ -17,10 +17,7 @@ macro_rules! shortening_bitop_fn_body {
                     *$lhs = Self::empty();
                 }
             },
-            (
-                Representation::SparseInline,
-                Representation::NormalInline | Representation::NormalHeap,
-            ) => {
+            (Representation::Sparse, Representation::Inline | Representation::Alloc) => {
                 let lhs_flag = unsafe { $lhs.get_sparse_data_unchecked() };
                 let target_elem = lhs_flag / BITS;
                 let target_shift = lhs_flag % BITS;
@@ -36,10 +33,7 @@ macro_rules! shortening_bitop_fn_body {
                     *$lhs = Self::empty();
                 }
             }
-            (
-                Representation::NormalInline | Representation::NormalHeap,
-                Representation::SparseInline,
-            ) => {
+            (Representation::Inline | Representation::Alloc, Representation::Sparse) => {
                 let rhs_flag = unsafe { $rhs.get_sparse_data_unchecked() };
                 let target_elem = rhs_flag / BITS;
                 let target_shift = rhs_flag % BITS;
@@ -67,16 +61,13 @@ macro_rules! shortening_bitop_fn_body {
                     }
                 }
             }
-            (
-                Representation::NormalInline,
-                Representation::NormalInline | Representation::NormalHeap,
-            ) => unsafe {
+            (Representation::Inline, Representation::Inline | Representation::Alloc) => unsafe {
                 let mut lhs = $lhs.get_inline_data_unchecked();
                 let rhs = $rhs.data()[0];
                 $opa(&mut lhs, rhs);
                 $lhs.write_inline_data_unchecked(lhs);
             },
-            (Representation::NormalHeap, Representation::NormalHeap) => {
+            (Representation::Alloc, Representation::Alloc) => {
                 let lhs = unsafe { $lhs.as_slice_mut_unchecked() };
                 let rhs = unsafe { $rhs.as_slice_unchecked() };
 
@@ -87,7 +78,7 @@ macro_rules! shortening_bitop_fn_body {
                     $opa(lhs, *rhs);
                 }
             }
-            (Representation::NormalHeap, Representation::NormalInline) => {
+            (Representation::Alloc, Representation::Inline) => {
                 let lhs = unsafe { $lhs.as_slice_mut_unchecked() };
                 let rhs = unsafe { $rhs.get_inline_data_unchecked() };
 
@@ -102,7 +93,7 @@ macro_rules! shortening_bitop_fn_body {
 macro_rules! extending_bitop_fn_body {
     ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:expr, $self_op:ident) => {
         match ($lhs.representation(), $rhs.representation()) {
-            (Representation::SparseInline, Representation::SparseInline) => unsafe {
+            (Representation::Sparse, Representation::Sparse) => unsafe {
                 let lhs_flag = $lhs.get_sparse_data_unchecked();
                 let rhs_flag = $rhs.get_sparse_data_unchecked();
 
@@ -120,30 +111,21 @@ macro_rules! extending_bitop_fn_body {
                     *$lhs = Self::empty();
                 }
             },
-            (
-                Representation::SparseInline,
-                Representation::NormalInline | Representation::NormalHeap,
-            ) => {
+            (Representation::Sparse, Representation::Inline | Representation::Alloc) => {
                 let mut lhs_normalized = $lhs.as_normal();
                 Self::$self_op(&mut lhs_normalized, $rhs);
                 *$lhs = lhs_normalized;
             }
-            (
-                Representation::NormalInline | Representation::NormalHeap,
-                Representation::SparseInline,
-            ) => {
+            (Representation::Inline | Representation::Alloc, Representation::Sparse) => {
                 Self::$self_op($lhs, $rhs.as_normal());
             }
-            (Representation::NormalInline, Representation::NormalInline) => unsafe {
+            (Representation::Inline, Representation::Inline) => unsafe {
                 let mut lhs = $lhs.get_inline_data_unchecked();
                 let rhs = $rhs.get_inline_data_unchecked();
                 $opa(&mut lhs, rhs);
                 $lhs.write_inline_data_unchecked(lhs);
             },
-            (
-                Representation::NormalInline | Representation::NormalHeap,
-                Representation::NormalHeap,
-            ) => {
+            (Representation::Inline | Representation::Alloc, Representation::Alloc) => {
                 let rhs_hb = $rhs.highest_set_bit();
                 let lhs_hb = $lhs.highest_set_bit();
                 if rhs_hb > lhs_hb {
@@ -160,7 +142,7 @@ macro_rules! extending_bitop_fn_body {
                     $opa(lhs, *rhs);
                 }
             }
-            (Representation::NormalHeap, Representation::NormalInline) => {
+            (Representation::Alloc, Representation::Inline) => {
                 let lhs = unsafe { $lhs.as_slice_mut_unchecked() };
                 let rhs = unsafe { $rhs.get_inline_data_unchecked() };
 

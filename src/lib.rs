@@ -105,9 +105,9 @@ mod typesize;
 const HEADER_SIZE: u32 = 2;
 
 enum Representation {
-    NormalInline = 0b01,
-    SparseInline = 0b11,
-    NormalHeap = 0b00,
+    Inline = 0b01,
+    Sparse = 0b11,
+    Alloc = 0b00,
 }
 
 const BITS: usize = usize::BITS as usize;
@@ -290,9 +290,9 @@ impl SmolBitSet {
     #[inline]
     fn representation(&self) -> Representation {
         match self.ptr.addr().get() & 0b11 {
-            0b00 => Representation::NormalHeap,
-            0b01 => Representation::NormalInline,
-            0b11 => Representation::SparseInline,
+            0b00 => Representation::Alloc,
+            0b01 => Representation::Inline,
+            0b11 => Representation::Sparse,
             _ => unreachable!(),
         }
     }
@@ -301,7 +301,7 @@ impl SmolBitSet {
     fn is_inline(&self) -> bool {
         matches!(
             self.representation(),
-            Representation::NormalInline | Representation::SparseInline
+            Representation::Inline | Representation::Sparse
         )
     }
 
@@ -320,7 +320,7 @@ impl SmolBitSet {
 
     #[inline]
     fn is_sparse(&self) -> bool {
-        matches!(self.representation(), Representation::SparseInline)
+        matches!(self.representation(), Representation::Sparse)
     }
 
     unsafe fn get_sparse_data_unchecked(&self) -> usize {
@@ -393,12 +393,12 @@ impl SmolBitSet {
     /// [`SmolBitSet`]. If capacity is already sufficient, this function does nothing.
     pub fn reserve(&mut self, additional: usize) {
         let current_capacity = match self.representation() {
-            Representation::NormalInline => MAX_INLINE_BITS,
-            Representation::NormalHeap => {
+            Representation::Inline => MAX_INLINE_BITS,
+            Representation::Alloc => {
                 let len = unsafe { self.len_unchecked() };
                 len * BITS
             }
-            Representation::SparseInline => {
+            Representation::Sparse => {
                 let flag = unsafe { self.get_sparse_data_unchecked() };
                 flag + 1
             }
@@ -445,7 +445,7 @@ impl SmolBitSet {
     }
 
     fn grow(&mut self, capacity: usize) {
-        let Representation::NormalHeap = self.representation() else {
+        let Representation::Alloc = self.representation() else {
             return;
         };
 
@@ -478,11 +478,11 @@ impl SmolBitSet {
     #[inline]
     fn highest_set_bit(&self) -> Option<usize> {
         match self.representation() {
-            Representation::NormalInline => {
+            Representation::Inline => {
                 let data = unsafe { self.get_inline_data_unchecked() };
                 highest_set_bit!(usize, data)
             }
-            Representation::NormalHeap => {
+            Representation::Alloc => {
                 let data = unsafe { self.as_slice_unchecked() };
                 for (idx, &data) in data.iter().enumerate().rev() {
                     if let Some(h) = highest_set_bit!(usize, data) {
@@ -492,7 +492,7 @@ impl SmolBitSet {
 
                 None
             }
-            Representation::SparseInline => unsafe { Some(self.get_sparse_data_unchecked()) },
+            Representation::Sparse => unsafe { Some(self.get_sparse_data_unchecked()) },
         }
     }
 }
@@ -558,7 +558,7 @@ fn create_layout(len: usize) -> Layout {
 
     if let Ok(layout) = Layout::array::<usize>(len + 1)
         // Ensure the address of our allocation will have all 0s in the header bits so that
-        // `SmolBitSet::representation` will return `Representation::NormalHeap`. As it stands,
+        // `SmolBitSet::representation` will return `Representation::Alloc`. As it stands,
         // `align_of::<usize>()` is the same as `size_of::<usize>` and this is a no-op, but
         // better to be explicit.
         && let Ok(layout) = layout.align_to(1 << HEADER_SIZE)

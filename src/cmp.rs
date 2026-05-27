@@ -5,22 +5,20 @@ use core::{cmp, iter};
 impl cmp::PartialEq for SmolBitSet {
     fn eq(&self, other: &Self) -> bool {
         match (self.representation(), other.representation()) {
-            (Representation::SparseInline, Representation::SparseInline) => {
+            (Representation::Sparse, Representation::Sparse) => {
                 let this = unsafe { self.get_sparse_data_unchecked() };
                 let other = unsafe { other.get_sparse_data_unchecked() };
                 this == other
             }
+            (Representation::Sparse, Representation::Inline | Representation::Alloc) => {
+                self.as_normal() == *other
+            }
+            (Representation::Inline | Representation::Alloc, Representation::Sparse) => {
+                *self == other.as_normal()
+            }
             (
-                Representation::SparseInline,
-                Representation::NormalInline | Representation::NormalHeap,
-            ) => self.as_normal() == *other,
-            (
-                Representation::NormalInline | Representation::NormalHeap,
-                Representation::SparseInline,
-            ) => *self == other.as_normal(),
-            (
-                Representation::NormalHeap | Representation::NormalInline,
-                Representation::NormalHeap | Representation::NormalInline,
+                Representation::Alloc | Representation::Inline,
+                Representation::Alloc | Representation::Inline,
             ) => {
                 let this = self.data();
                 let other = other.data();
@@ -65,22 +63,20 @@ impl cmp::Ord for SmolBitSet {
         }
 
         match (self.representation(), other.representation()) {
-            (Representation::SparseInline, Representation::SparseInline) => {
+            (Representation::Sparse, Representation::Sparse) => {
                 let this = unsafe { self.get_sparse_data_unchecked() };
                 let other = unsafe { other.get_sparse_data_unchecked() };
                 this.cmp(&other)
             }
+            (Representation::Sparse, Representation::Inline | Representation::Alloc) => {
+                self.as_normal().cmp(other)
+            }
+            (Representation::Inline | Representation::Alloc, Representation::Sparse) => {
+                self.cmp(&other.as_normal())
+            }
             (
-                Representation::SparseInline,
-                Representation::NormalInline | Representation::NormalHeap,
-            ) => self.as_normal().cmp(other),
-            (
-                Representation::NormalInline | Representation::NormalHeap,
-                Representation::SparseInline,
-            ) => self.cmp(&other.as_normal()),
-            (
-                Representation::NormalHeap | Representation::NormalInline,
-                Representation::NormalHeap | Representation::NormalInline,
+                Representation::Alloc | Representation::Inline,
+                Representation::Alloc | Representation::Inline,
             ) => {
                 let this = self.data();
                 let other = other.data();
