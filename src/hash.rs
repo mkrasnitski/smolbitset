@@ -105,7 +105,7 @@ mod tests {
         let val = 0xBEEF_F00D;
         let mut a = SmolBitSet::new_inline(val);
         let mut b = SmolBitSet::new_inline(val);
-        b.spill(70);
+        b.reserve(64);
         assert!(a.is_inline());
         assert!(!b.is_inline());
         assert_hash_eq(&a, &b);

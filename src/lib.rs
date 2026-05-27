@@ -264,7 +264,7 @@ impl SmolBitSet {
             return res;
         };
 
-        res.ensure_capacity(b + 1);
+        res.reserve(b + 1);
 
         if res.is_inline() {
             let mut data = 0;
@@ -389,6 +389,33 @@ impl SmolBitSet {
         Self::new_inline(1) << flag
     }
 
+    /// Reserves capacity for at least `additional` more bits to be inserted in the given
+    /// [`SmolBitSet`]. If capacity is already sufficient, this function does nothing.
+    pub fn reserve(&mut self, additional: usize) {
+        let current_capacity = match self.representation() {
+            Representation::NormalInline => MAX_INLINE_BITS,
+            Representation::NormalHeap => {
+                let len = unsafe { self.len_unchecked() };
+                len * BITS
+            }
+            Representation::SparseInline => {
+                let flag = unsafe { self.get_sparse_data_unchecked() };
+                flag + 1
+            }
+        };
+
+        let new_capacity = self.highest_set_bit().map_or(0, |b| b + 1) + additional;
+        if new_capacity <= current_capacity {
+            return;
+        }
+
+        if self.is_inline() {
+            self.spill(new_capacity);
+        } else {
+            self.grow(new_capacity);
+        }
+    }
+
     #[inline]
     fn spill(&mut self, capacity: usize) {
         if !self.is_inline() {
@@ -417,22 +444,13 @@ impl SmolBitSet {
         self.ptr = unsafe { NonNull::new_unchecked(ptr) };
     }
 
-    #[inline]
-    fn ensure_capacity(&mut self, capacity: usize) {
-        if self.is_inline() {
-            if capacity > MAX_INLINE_BITS {
-                self.spill(capacity)
-            }
-        } else {
-            let len = unsafe { self.len_unchecked() };
-            if capacity >= (BITS * len) {
-                unsafe { self.grow(len, capacity) }
-            }
-        }
-    }
+    fn grow(&mut self, capacity: usize) {
+        let Representation::NormalHeap = self.representation() else {
+            return;
+        };
 
-    unsafe fn grow(&mut self, len: usize, capacity: usize) {
         // we need to grow our slice allocation
+        let len = unsafe { self.len_unchecked() };
         let new_len = capacity.div_ceil(BITS);
         debug_assert!(new_len >= len);
 
@@ -598,25 +616,25 @@ mod tests {
         let mut t = SmolBitSet::empty();
         assert!(t.is_inline());
 
-        t.ensure_capacity(0);
+        t.reserve(0);
         assert!(t.is_inline());
 
-        t.ensure_capacity(32);
+        t.reserve(32);
         assert!(t.is_inline());
 
         let max_inline = MAX_INLINE_BITS;
-        t.ensure_capacity(max_inline);
+        t.reserve(max_inline);
         assert!(t.is_inline());
 
-        t.ensure_capacity(max_inline + 1);
+        t.reserve(max_inline + 1);
         assert!(!t.is_inline());
         assert_eq!(t.len(), 1);
 
-        t.ensure_capacity(65);
+        t.reserve(65);
         assert!(!t.is_inline());
         assert_eq!(t.len(), 2);
 
-        t.ensure_capacity(64 * 40);
+        t.reserve(64 * 40);
         assert!(!t.is_inline());
         assert_eq!(t.len(), 40);
     }
@@ -662,34 +680,32 @@ mod tests {
     }
 
     #[test]
-    fn spill() {
+    fn reserve() {
         let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
-        sbs.spill(30);
-        assert!(!sbs.is_inline());
-        // expecting 1 since the inline data can hold 63 bits already
-        // and spill will always allocate to at least store the inline data
-        assert_eq!(sbs.len(), 1);
-
-        let mut sbs = SmolBitSet::empty();
+        sbs.reserve(30);
         assert!(sbs.is_inline());
-
-        sbs.spill(55);
-        assert!(!sbs.is_inline());
-        assert_eq!(sbs.len(), 1);
+        assert_eq!(sbs.len(), 0);
 
         let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
-        sbs.spill(64);
+        sbs.reserve(55);
+        assert!(sbs.is_inline());
+        assert_eq!(sbs.len(), 0);
+
+        let mut sbs = SmolBitSet::empty();
+        assert!(sbs.is_inline());
+
+        sbs.reserve(64);
         assert!(!sbs.is_inline());
         assert_eq!(sbs.len(), 1);
 
         let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
-        sbs.spill(65);
+        sbs.reserve(65);
         assert!(!sbs.is_inline());
         assert_eq!(sbs.len(), 2);
     }

@@ -21,8 +21,7 @@ impl SmolBitSet {
             return;
         }
 
-        let current_capacity = self.highest_set_bit().unwrap_or_default() + 1;
-        self.ensure_capacity(current_capacity + rhs);
+        self.reserve(rhs);
 
         if self.is_inline() {
             unsafe {

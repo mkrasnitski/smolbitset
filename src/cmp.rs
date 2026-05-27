@@ -135,7 +135,7 @@ mod tests {
             let mut b = SmolBitSet::from(0xFFFFu16);
 
             // ensure a is larger than b in memory
-            a.spill(256);
+            a.reserve(256);
 
             assert_eq!(a, b);
             assert_eq!(b, a);
@@ -155,7 +155,7 @@ mod tests {
             let mut b = SmolBitSet::from(0x00C5_F00Du32);
 
             // ensure a is larger than b in memory
-            a.spill(256);
+            a.reserve(256);
 
             assert!(a < b);
             assert!(b > a);

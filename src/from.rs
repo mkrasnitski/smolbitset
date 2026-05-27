@@ -11,7 +11,7 @@ macro_rules! impl_from {
         impl From<$t> for SmolBitSet {
             fn from(value: $t) -> Self {
                 let mut sbs = SmolBitSet::empty();
-                sbs.ensure_capacity(highest_set_bit!($t, value).map_or(0, |b| b + 1));
+                sbs.reserve(highest_set_bit!($t, value).map_or(0, |b| b + 1));
 
                 if sbs.is_inline() {
                     unsafe { sbs.write_inline_data_unchecked(value as usize) };
@@ -54,7 +54,7 @@ impl FromStr for SmolBitSet {
         let tmp = BigUint::from_str(s)?;
 
         let mut sbs = Self::empty();
-        sbs.ensure_capacity(tmp.bits() as usize);
+        sbs.reserve(tmp.bits() as usize);
 
         #[cfg(target_pointer_width = "32")]
         let digits = tmp.to_u32_digits();
