@@ -102,8 +102,8 @@ macro_rules! extending_bitop_fn_body {
                         // result is still sparse and lhs is already correct
                     } else {
                         // result is not sparse, must contain both flags
-                        let mut res = $lhs.as_normal();
-                        $opa(&mut res, $rhs.as_normal());
+                        let mut res = $lhs.normalize();
+                        $opa(&mut res, $rhs.normalize());
                         *$lhs = res;
                     }
                 } else {
@@ -112,12 +112,12 @@ macro_rules! extending_bitop_fn_body {
                 }
             },
             (Representation::Sparse, Representation::Inline | Representation::Alloc) => {
-                let mut lhs_normalized = $lhs.as_normal();
+                let mut lhs_normalized = $lhs.normalize();
                 Self::$self_op(&mut lhs_normalized, $rhs);
                 *$lhs = lhs_normalized;
             }
             (Representation::Inline | Representation::Alloc, Representation::Sparse) => {
-                Self::$self_op($lhs, $rhs.as_normal());
+                Self::$self_op($lhs, $rhs.normalize());
             }
             (Representation::Inline, Representation::Inline) => unsafe {
                 let mut lhs = $lhs.get_inline_data_unchecked();

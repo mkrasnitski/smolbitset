@@ -5,7 +5,7 @@ use core::hash;
 impl hash::Hash for SmolBitSet {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         if self.is_sparse() {
-            self.as_normal().hash(state);
+            self.normalize().hash(state);
             return;
         }
 

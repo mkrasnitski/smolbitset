@@ -11,10 +11,10 @@ impl cmp::PartialEq for SmolBitSet {
                 this == other
             }
             (Representation::Sparse, Representation::Inline | Representation::Alloc) => {
-                self.as_normal() == *other
+                self.normalize() == *other
             }
             (Representation::Inline | Representation::Alloc, Representation::Sparse) => {
-                *self == other.as_normal()
+                *self == other.normalize()
             }
             (
                 Representation::Alloc | Representation::Inline,
@@ -69,10 +69,10 @@ impl cmp::Ord for SmolBitSet {
                 this.cmp(&other)
             }
             (Representation::Sparse, Representation::Inline | Representation::Alloc) => {
-                self.as_normal().cmp(other)
+                self.normalize().cmp(other)
             }
             (Representation::Inline | Representation::Alloc, Representation::Sparse) => {
-                self.cmp(&other.as_normal())
+                self.cmp(&other.normalize())
             }
             (
                 Representation::Alloc | Representation::Inline,

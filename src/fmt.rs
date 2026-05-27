@@ -10,7 +10,7 @@ use fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result, UpperHex};
 impl Debug for SmolBitSet {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         if self.is_sparse() {
-            return Debug::fmt(&self.as_normal(), f);
+            return Debug::fmt(&self.normalize(), f);
         }
 
         f.debug_list().entries(self.data().iter()).finish()
@@ -20,7 +20,7 @@ impl Debug for SmolBitSet {
 impl Display for SmolBitSet {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         if self.is_sparse() {
-            return Display::fmt(&self.as_normal(), f);
+            return Display::fmt(&self.normalize(), f);
         }
 
         let slice = self.data();
@@ -43,7 +43,7 @@ macro_rules! impl_format {
                 const PAD: usize = BITS / ($variants as u8).ilog2() as usize;
 
                 if self.is_sparse() {
-                    return $kind::fmt(&self.as_normal(), f);
+                    return $kind::fmt(&self.normalize(), f);
                 }
 
                 let cap = self.highest_set_bit().unwrap_or_default() + 1;

@@ -375,18 +375,13 @@ impl SmolBitSet {
         unsafe { slice::from_raw_parts_mut(self.data_ptr_unchecked(), self.len_unchecked()) }
     }
 
-    fn as_normal(&self) -> Self {
-        if !self.is_sparse() {
-            return self.clone();
+    fn normalize(&self) -> Self {
+        if self.is_sparse() {
+            let flag = unsafe { self.get_sparse_data_unchecked() };
+            Self::new_inline(1) << flag
+        } else {
+            self.clone()
         }
-
-        debug_assert!(
-            self.is_inline(),
-            "sparse heap representation is not implemented yet"
-        );
-
-        let flag = unsafe { self.get_sparse_data_unchecked() };
-        Self::new_inline(1) << flag
     }
 
     /// Reserves capacity for at least `additional` more bits to be inserted in the given
