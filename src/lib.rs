@@ -447,70 +447,53 @@ impl SmolBitSet {
     pub fn reserve(&mut self, additional: usize) {
         let new_capacity = self.len() + additional;
         if new_capacity > self.capacity() {
-            if self.is_inline() {
-                self.spill(new_capacity);
+            let new_size = new_capacity.div_ceil(BITS);
+            let new_layout = create_layout(new_size);
+
+            let ptr = if self.is_inline() {
+                // Create a new allocation and then copy data over
+                #[expect(clippy::cast_ptr_alignment)]
+                let ptr = unsafe { alloc::alloc(new_layout).cast::<usize>() };
+                if ptr.is_null() {
+                    handle_alloc_error(new_layout);
+                }
+
+                unsafe {
+                    // Store the size in the first element
+                    *ptr = new_size;
+                    // Store inline data in the next element
+                    *ptr.add(1) = self.get_inline_data_unchecked();
+                    // Fill the rest with zeros
+                    slice::from_raw_parts_mut(ptr.add(2), new_size - 1).fill(0);
+                }
+                ptr
             } else {
-                self.grow(new_capacity);
-            }
+                let current_size = unsafe { self.alloc_size_unchecked() };
+                debug_assert!(new_size >= current_size);
+
+                // Reallocate the current data into a larger buffer
+                let current_layout = create_layout(current_size);
+                #[expect(clippy::cast_ptr_alignment)]
+                let ptr = unsafe {
+                    alloc::realloc(self.ptr.as_ptr().cast(), current_layout, new_layout.size())
+                        .cast::<usize>()
+                };
+                if ptr.is_null() {
+                    handle_alloc_error(new_layout);
+                }
+
+                unsafe {
+                    // Update the new size in the first element
+                    *ptr = new_size;
+                    // Initialize newly allocated memory to zero
+                    slice::from_raw_parts_mut(ptr.add(1 + current_size), new_size - current_size)
+                        .fill(0);
+                }
+                ptr
+            };
+
+            self.ptr = unsafe { NonNull::new_unchecked(ptr) };
         }
-    }
-
-    #[inline]
-    fn spill(&mut self, capacity: usize) {
-        if !self.is_inline() {
-            return;
-        }
-
-        let alloc_size = capacity.div_ceil(BITS);
-
-        let layout = create_layout(alloc_size);
-        let ptr = unsafe {
-            #[allow(clippy::cast_ptr_alignment)]
-            alloc::alloc(layout).cast::<usize>()
-        };
-        if ptr.is_null() {
-            handle_alloc_error(layout)
-        }
-
-        unsafe {
-            *ptr = alloc_size; // store the size in the first element
-            let old = self.get_inline_data_unchecked();
-            *ptr.add(1) = old;
-
-            slice::from_raw_parts_mut(ptr.add(2), alloc_size - 1).fill(0);
-        };
-
-        self.ptr = unsafe { NonNull::new_unchecked(ptr) };
-    }
-
-    fn grow(&mut self, capacity: usize) {
-        let Representation::Alloc = self.representation() else {
-            return;
-        };
-
-        // we need to grow our slice allocation
-        let alloc_size = unsafe { self.alloc_size_unchecked() };
-        let new_size = capacity.div_ceil(BITS);
-        debug_assert!(new_size >= alloc_size);
-
-        let layout = create_layout(alloc_size);
-        let new_layout = create_layout(new_size);
-        let new_ptr = unsafe {
-            #[allow(clippy::cast_ptr_alignment)]
-            alloc::realloc(self.ptr.as_ptr().cast(), layout, new_layout.size()).cast::<usize>()
-        };
-        if new_ptr.is_null() {
-            handle_alloc_error(new_layout)
-        }
-
-        unsafe {
-            // initializing newly allocated memory to zero
-            slice::from_raw_parts_mut(new_ptr.add(1 + alloc_size), new_size - alloc_size).fill(0);
-
-            // update the new size in the first element
-            *new_ptr = new_size;
-        }
-        self.ptr = unsafe { NonNull::new_unchecked(new_ptr) };
     }
 }
 
