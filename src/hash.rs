@@ -1,4 +1,4 @@
-use crate::{BITS, SmolBitSet};
+use crate::SmolBitSet;
 
 use core::hash;
 
@@ -7,7 +7,7 @@ impl hash::Hash for SmolBitSet {
         if self.is_sparse() {
             self.normalize().hash(state);
         } else {
-            for d in self.data().iter().take(self.len().div_ceil(BITS)) {
+            for d in self.data().iter() {
                 d.hash(state);
             }
         }

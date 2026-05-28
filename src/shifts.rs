@@ -410,7 +410,7 @@ mod tests {
         assert_eq!(a.capacity(), 64 * 3); // still same capacity, does not auto shrink
         assert_eq!(
             a.data().as_ref(),
-            [0x37A5_A500_0000_0000, 0x0000_00A5_A5BE_EF13, 0],
+            [0x37A5_A500_0000_0000, 0x0000_00A5_A5BE_EF13],
         );
     }
 }

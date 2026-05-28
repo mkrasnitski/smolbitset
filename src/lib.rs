@@ -406,7 +406,10 @@ impl SmolBitSet {
             let data = unsafe { self.get_inline_data_unchecked() };
             vec![data].into()
         } else {
-            unsafe { self.as_slice_unchecked().into() }
+            let data = unsafe { self.as_slice_unchecked() };
+            let len = self.len();
+            let slice_len = if len == 0 { 1 } else { len.div_ceil(BITS) };
+            data[..slice_len].into()
         }
     }
 

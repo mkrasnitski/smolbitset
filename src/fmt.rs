@@ -46,11 +46,8 @@ macro_rules! impl_format {
                     return $kind::fmt(&self.normalize(), f);
                 }
 
-                let len = self.len();
-                let cap = if len == 0 { 1 } else { len.div_ceil(BITS) };
-
                 let mut full_width = false;
-                for d in self.data().iter().take(cap).rev() {
+                for d in self.data().iter().rev() {
                     if full_width {
                         write!(f, concat!("{:0PADDING$", $format, "}"), d, PADDING = PAD)?;
                     } else {

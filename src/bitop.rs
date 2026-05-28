@@ -420,7 +420,7 @@ mod tests {
 
                         let res = lhs.$name(&rhs);
                         assert_eq!(
-                            res.data().as_ref(),
+                            zero_pad_to(res.data().into_owned(), 2),
                             [
                                 ((($a << 32) as usize).$name($b as usize)),
                                 ((($a >> 32) as usize).$name(0 as usize))
