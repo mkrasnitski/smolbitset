@@ -5,10 +5,10 @@ impl typesize::TypeSize for SmolBitSet {
         const ELEM_SIZE: usize = core::mem::size_of::<usize>();
 
         if self.is_inline() {
-            return 0;
+            0
+        } else {
+            let len = unsafe { self.alloc_size_unchecked() };
+            ELEM_SIZE * (len + 1)
         }
-
-        let len = unsafe { self.len_unchecked() } + 1;
-        ELEM_SIZE * len
     }
 }

@@ -72,7 +72,7 @@ impl FromStr for SmolBitSet {
             }
         } else {
             let digit_count = digits.len();
-            assert!(sbs.len() >= digit_count);
+            assert!(sbs.capacity() >= digit_count);
 
             let data = unsafe { sbs.as_slice_mut_unchecked() };
             data[0..digit_count].copy_from_slice(&digits);
@@ -113,7 +113,7 @@ mod tests {
     fn u64_hb_64() {
         let t = SmolBitSet::from(0xC5C5_BEEF_0000_1234u64);
         assert!(!t.is_inline());
-        assert_eq!(t.len(), 1);
+        assert_eq!(t.capacity(), 64);
 
         let d = t.data();
         assert_eq!(d.len(), 1);
@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn u128_max() {
         let t = SmolBitSet::from(u128::MAX);
-        assert_eq!(t.len(), 2);
+        assert_eq!(t.capacity(), 128);
 
         let d = t.data();
         assert_eq!(d.len(), 2);

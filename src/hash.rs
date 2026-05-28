@@ -6,12 +6,10 @@ impl hash::Hash for SmolBitSet {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         if self.is_sparse() {
             self.normalize().hash(state);
-            return;
-        }
-
-        let cap = self.highest_set_bit().unwrap_or_default() + 1;
-        for d in self.data().iter().take(cap.div_ceil(BITS)) {
-            d.hash(state);
+        } else {
+            for d in self.data().iter().take(self.len().div_ceil(BITS)) {
+                d.hash(state);
+            }
         }
     }
 }

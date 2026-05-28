@@ -262,11 +262,11 @@ mod tests {
             assert!(a.is_inline());
 
             a <<= 8u8;
-            assert_eq!(a.len(), 1);
+            assert_eq!(a.capacity(), 64);
             assert_eq!(a.data().as_ref(), [0xABCD_5513_37BE_EF00]);
 
             let b = a << 24u8;
-            assert_eq!(b.len(), 2);
+            assert_eq!(b.capacity(), 64 * 2);
             assert_eq!(b.data().as_ref(), [0x1337_BEEF_0000_0000, 0x00AB_CD55]);
         }
 
@@ -277,11 +277,11 @@ mod tests {
             assert!(!a.is_inline());
 
             a <<= 32u8;
-            assert_eq!(a.len(), 2);
+            assert_eq!(a.capacity(), 64 * 2);
             assert_eq!(a.data().as_ref(), [0xAFFE_BEEF_0000_0000, 0xFFEE_00AA]);
 
             a <<= 64u8;
-            assert_eq!(a.len(), 3);
+            assert_eq!(a.capacity(), 64 * 3);
             assert_eq!(a.data().as_ref(), [0, 0xAFFE_BEEF_0000_0000, 0xFFEE_00AA]);
         }
 
@@ -336,7 +336,7 @@ mod tests {
             let val = 0xF420_1337_FEFE_BEEFu64;
             let mut a = SmolBitSet::from(val);
             assert!(!a.is_inline());
-            assert_eq!(a.len(), 1);
+            assert_eq!(a.capacity(), 64);
 
             a >>= 8u8;
             assert!(!a.is_inline());
@@ -354,12 +354,12 @@ mod tests {
             assert!(!a.is_inline());
 
             a >>= 32u8;
-            assert_eq!(a.len(), 1);
+            assert_eq!(a.capacity(), 64);
             assert_eq!(a.data().as_ref(), [0xFFEE_00AA]);
 
             let mut a = SmolBitSet::from(val);
             a >>= 64u8;
-            assert_eq!(a.len(), 1);
+            assert_eq!(a.capacity(), 64);
             assert_eq!(a.data().as_ref(), [0]);
         }
 
@@ -398,16 +398,16 @@ mod tests {
         let val = 0xA5A5_BEEF_1337_A5A5u64;
         let mut a = SmolBitSet::from(val);
         assert!(!a.is_inline());
-        assert_eq!(a.len(), 1);
+        assert_eq!(a.capacity(), 64);
 
         a <<= 64u16 + 24u16;
         assert!(!a.is_inline());
-        assert_eq!(a.len(), 3);
+        assert_eq!(a.capacity(), 64 * 3);
         assert_eq!(a.data().as_ref(), [0, 0xEF13_37A5_A500_0000, 0x00A5_A5BE]);
 
         a >>= 32u32 + 16u32;
         assert!(!a.is_inline());
-        assert_eq!(a.len(), 3); // still same size, does not auto shrink
+        assert_eq!(a.capacity(), 64 * 3); // still same capacity, does not auto shrink
         assert_eq!(
             a.data().as_ref(),
             [0x37A5_A500_0000_0000, 0x0000_00A5_A5BE_EF13, 0],

@@ -335,23 +335,68 @@ impl SmolBitSet {
         self.ptr = NonNull::without_provenance(addr);
     }
 
-    #[inline]
-    fn len(&self) -> usize {
-        if self.is_inline() {
-            return 0;
+    /// Returns the total number of bits the bitset can hold without reallocating.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use smolbitset::SmolBitSet;
+    /// let sbs = SmolBitSet::new_inline(0b1000_1001_1010_1101);
+    /// assert_eq!(sbs.capacity(), usize::BITS as usize - 2);
+    /// ```
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        match self.representation() {
+            Representation::Inline => MAX_INLINE_BITS,
+            Representation::Alloc => {
+                let size = unsafe { self.alloc_size_unchecked() };
+                size * BITS
+            }
+            Representation::Sparse => {
+                // Should this be `MAX_INLINE_BITS` instead?
+                let flag = unsafe { self.get_sparse_data_unchecked() };
+                flag + 1
+            }
         }
-
-        unsafe { self.len_unchecked() }
     }
 
-    #[inline]
-    const unsafe fn len_unchecked(&self) -> usize {
-        unsafe { *self.ptr.as_ptr() }
+    /// Returns the number of bits in the bitset, not counting leading zeros.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use smolbitset::SmolBitSet;
+    /// let sbs = SmolBitSet::new_inline(0b1000_1001_1010_1101);
+    /// assert_eq!(sbs.len(), 16);
+    /// ```
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self.representation() {
+            Representation::Inline => {
+                let data = unsafe { self.get_inline_data_unchecked() };
+                highest_set_bit!(usize, data).map_or(0, |b| b + 1)
+            }
+            Representation::Alloc => {
+                let data = unsafe { self.as_slice_unchecked() };
+                for (i, &data) in data.iter().enumerate().rev() {
+                    if let Some(b) = highest_set_bit!(usize, data) {
+                        return i * BITS + b + 1;
+                    }
+                }
+
+                0
+            }
+            Representation::Sparse => {
+                let flag = unsafe { self.get_sparse_data_unchecked() };
+                flag + 1
+            }
+        }
     }
 
-    #[inline]
-    const unsafe fn data_ptr_unchecked(&self) -> *mut usize {
-        unsafe { self.ptr.as_ptr().add(1) }
+    /// Returns `true` if the bitset contains no set bits.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Returns the underlying data of the [`SmolBitSet`] split into individual [`usize`] blocks.
@@ -366,13 +411,23 @@ impl SmolBitSet {
     }
 
     #[inline]
+    const unsafe fn alloc_size_unchecked(&self) -> usize {
+        unsafe { *self.ptr.as_ptr() }
+    }
+
+    #[inline]
+    const unsafe fn data_ptr_unchecked(&self) -> *mut usize {
+        unsafe { self.ptr.as_ptr().add(1) }
+    }
+
+    #[inline]
     const unsafe fn as_slice_unchecked(&self) -> &[usize] {
-        unsafe { slice::from_raw_parts(self.data_ptr_unchecked(), self.len_unchecked()) }
+        unsafe { slice::from_raw_parts(self.data_ptr_unchecked(), self.alloc_size_unchecked()) }
     }
 
     #[inline]
     const unsafe fn as_slice_mut_unchecked(&mut self) -> &mut [usize] {
-        unsafe { slice::from_raw_parts_mut(self.data_ptr_unchecked(), self.len_unchecked()) }
+        unsafe { slice::from_raw_parts_mut(self.data_ptr_unchecked(), self.alloc_size_unchecked()) }
     }
 
     fn normalize(&self) -> Self {
@@ -387,27 +442,13 @@ impl SmolBitSet {
     /// Reserves capacity for at least `additional` more bits to be inserted in the given
     /// [`SmolBitSet`]. If capacity is already sufficient, this function does nothing.
     pub fn reserve(&mut self, additional: usize) {
-        let current_capacity = match self.representation() {
-            Representation::Inline => MAX_INLINE_BITS,
-            Representation::Alloc => {
-                let len = unsafe { self.len_unchecked() };
-                len * BITS
+        let new_capacity = self.len() + additional;
+        if new_capacity > self.capacity() {
+            if self.is_inline() {
+                self.spill(new_capacity);
+            } else {
+                self.grow(new_capacity);
             }
-            Representation::Sparse => {
-                let flag = unsafe { self.get_sparse_data_unchecked() };
-                flag + 1
-            }
-        };
-
-        let new_capacity = self.highest_set_bit().map_or(0, |b| b + 1) + additional;
-        if new_capacity <= current_capacity {
-            return;
-        }
-
-        if self.is_inline() {
-            self.spill(new_capacity);
-        } else {
-            self.grow(new_capacity);
         }
     }
 
@@ -417,9 +458,9 @@ impl SmolBitSet {
             return;
         }
 
-        let len = capacity.div_ceil(BITS);
+        let alloc_size = capacity.div_ceil(BITS);
 
-        let layout = create_layout(len);
+        let layout = create_layout(alloc_size);
         let ptr = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
             alloc::alloc(layout).cast::<usize>()
@@ -429,11 +470,11 @@ impl SmolBitSet {
         }
 
         unsafe {
-            *ptr = len; // store the length in the first element
+            *ptr = alloc_size; // store the size in the first element
             let old = self.get_inline_data_unchecked();
             *ptr.add(1) = old;
 
-            slice::from_raw_parts_mut(ptr.add(2), len - 1).fill(0);
+            slice::from_raw_parts_mut(ptr.add(2), alloc_size - 1).fill(0);
         };
 
         self.ptr = unsafe { NonNull::new_unchecked(ptr) };
@@ -445,12 +486,12 @@ impl SmolBitSet {
         };
 
         // we need to grow our slice allocation
-        let len = unsafe { self.len_unchecked() };
-        let new_len = capacity.div_ceil(BITS);
-        debug_assert!(new_len >= len);
+        let alloc_size = unsafe { self.alloc_size_unchecked() };
+        let new_size = capacity.div_ceil(BITS);
+        debug_assert!(new_size >= alloc_size);
 
-        let layout = create_layout(len);
-        let new_layout = create_layout(new_len);
+        let layout = create_layout(alloc_size);
+        let new_layout = create_layout(new_size);
         let new_ptr = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
             alloc::realloc(self.ptr.as_ptr().cast(), layout, new_layout.size()).cast::<usize>()
@@ -461,34 +502,12 @@ impl SmolBitSet {
 
         unsafe {
             // initializing newly allocated memory to zero
-            slice::from_raw_parts_mut(new_ptr.add(1 + len), new_len - len).fill(0);
+            slice::from_raw_parts_mut(new_ptr.add(1 + alloc_size), new_size - alloc_size).fill(0);
 
-            // update the new length in the first element
-            *new_ptr = new_len;
+            // update the new size in the first element
+            *new_ptr = new_size;
         }
         self.ptr = unsafe { NonNull::new_unchecked(new_ptr) };
-    }
-
-    /// Returns the index of the most significant bit set to 1.
-    #[inline]
-    fn highest_set_bit(&self) -> Option<usize> {
-        match self.representation() {
-            Representation::Inline => {
-                let data = unsafe { self.get_inline_data_unchecked() };
-                highest_set_bit!(usize, data)
-            }
-            Representation::Alloc => {
-                let data = unsafe { self.as_slice_unchecked() };
-                for (idx, &data) in data.iter().enumerate().rev() {
-                    if let Some(h) = highest_set_bit!(usize, data) {
-                        return Some((idx * BITS) + h);
-                    }
-                }
-
-                None
-            }
-            Representation::Sparse => unsafe { Some(self.get_sparse_data_unchecked()) },
-        }
     }
 }
 
@@ -499,8 +518,10 @@ impl Drop for SmolBitSet {
             return;
         }
 
+        let alloc_size = unsafe { self.alloc_size_unchecked() };
+        let layout = create_layout(alloc_size);
+
         unsafe {
-            let layout = create_layout(self.len_unchecked());
             alloc::dealloc(self.ptr.cast::<u8>().as_ptr(), layout);
         }
     }
@@ -623,15 +644,15 @@ mod tests {
 
         t.reserve(max_inline + 1);
         assert!(!t.is_inline());
-        assert_eq!(t.len(), 1);
+        assert_eq!(t.capacity(), 64);
 
         t.reserve(65);
         assert!(!t.is_inline());
-        assert_eq!(t.len(), 2);
+        assert_eq!(t.capacity(), 64 * 2);
 
         t.reserve(64 * 40);
         assert!(!t.is_inline());
-        assert_eq!(t.len(), 40);
+        assert_eq!(t.capacity(), 64 * 40);
     }
 
     #[test]
@@ -655,7 +676,7 @@ mod tests {
     fn set_get_slice() {
         let a = SmolBitSet::from(0xC5C5_BEEF_0000_1234u64);
         assert!(!a.is_inline());
-        assert_eq!(a.len(), 1);
+        assert_eq!(a.capacity(), 64);
 
         let d1 = a.data();
         assert_eq!(d1.len(), 1);
@@ -681,28 +702,28 @@ mod tests {
 
         sbs.reserve(30);
         assert!(sbs.is_inline());
-        assert_eq!(sbs.len(), 0);
+        assert_eq!(sbs.capacity(), MAX_INLINE_BITS);
 
         let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.reserve(55);
         assert!(sbs.is_inline());
-        assert_eq!(sbs.len(), 0);
+        assert_eq!(sbs.capacity(), MAX_INLINE_BITS);
 
         let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.reserve(64);
         assert!(!sbs.is_inline());
-        assert_eq!(sbs.len(), 1);
+        assert_eq!(sbs.capacity(), 64);
 
         let mut sbs = SmolBitSet::empty();
         assert!(sbs.is_inline());
 
         sbs.reserve(65);
         assert!(!sbs.is_inline());
-        assert_eq!(sbs.len(), 2);
+        assert_eq!(sbs.capacity(), 64 * 2);
     }
 
     #[test]

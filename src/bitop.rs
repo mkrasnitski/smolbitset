@@ -126,10 +126,10 @@ macro_rules! extending_bitop_fn_body {
                 $lhs.write_inline_data_unchecked(lhs);
             },
             (Representation::Inline | Representation::Alloc, Representation::Alloc) => {
-                let rhs_hb = $rhs.highest_set_bit();
-                let lhs_hb = $lhs.highest_set_bit();
+                let rhs_hb = $rhs.len();
+                let lhs_hb = $lhs.len();
                 if rhs_hb > lhs_hb {
-                    $lhs.reserve(rhs_hb.unwrap_or_default() - lhs_hb.unwrap_or_default());
+                    $lhs.reserve(rhs_hb - lhs_hb);
                 }
 
                 let lhs = unsafe { $lhs.as_slice_mut_unchecked() };
@@ -344,11 +344,11 @@ mod tests {
                     fn $name() {
                         let a = SmolBitSet::from($a);
                         let b = SmolBitSet::from($b);
-                        assert_eq!(a.len(), 1);
-                        assert_eq!(b.len(), 1);
+                        assert_eq!(a.capacity(), 64);
+                        assert_eq!(b.capacity(), 64);
 
                         let res = a.$name(&b);
-                        assert_eq!(res.len(), 1);
+                        assert_eq!(res.capacity(), 64);
                         assert_eq!(res.data().as_ref(), [($a as usize).$name($b as usize)]);
                     }
                 )*}
@@ -372,7 +372,7 @@ mod tests {
                         let a = SmolBitSet::from($a);
                         let b = SmolBitSet::from($b);
                         assert!(a.is_inline());
-                        assert_eq!(b.len(), 1);
+                        assert_eq!(b.capacity(), 64);
 
                         let res1 = a.clone().$name(&b);
                         assert_eq!(res1.data().as_ref(), [($a as usize).$name($b as usize)]);
@@ -398,7 +398,7 @@ mod tests {
                 let a = SmolBitSet::from(A);
                 let b = SmolBitSet::from(B);
                 assert!(a.is_inline());
-                assert_eq!(b.len(), 1);
+                assert_eq!(b.capacity(), 64);
 
                 let res1 = a.and_not(&b);
                 assert_eq!(res1.data().as_ref(), [(A as usize).and_not(B as usize)]);
@@ -415,8 +415,8 @@ mod tests {
                         let mut lhs = SmolBitSet::from($a);
                         let rhs = SmolBitSet::from($b);
                         lhs <<= 32u8;
-                        let lhs_len = lhs.len();
-                        assert!(lhs_len > rhs.len());
+                        let lhs_capacity = lhs.capacity();
+                        assert!(lhs_capacity > rhs.capacity());
 
                         let res = lhs.$name(&rhs);
                         assert_eq!(
@@ -448,8 +448,8 @@ mod tests {
                         let lhs = SmolBitSet::from($a);
                         let mut rhs = SmolBitSet::from($b);
                         rhs <<= 32u8;
-                        let rhs_len = rhs.len();
-                        assert!(rhs_len > lhs.len());
+                        let rhs_capacity = rhs.capacity();
+                        assert!(rhs_capacity > lhs.capacity());
 
                         let res = lhs.$name(&rhs);
                         assert_eq!(
