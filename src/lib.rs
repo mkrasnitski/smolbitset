@@ -4,30 +4,6 @@
 //! `no_std` environments by disabling the `std` feature. The `no_std` environment must support
 //! [`alloc`].
 //!
-//! Constructing a [`SmolBitSet`] in a `const` context is supported in the following ways:
-//! 1. If the value has multiple set bits, call [`SmolBitSet::new_inline`].
-//! 2. If the value has only a single set bit (i.e. it represents a flag), [`SmolBitSet::flag`] is
-//!    recommended.
-//!
-//! ## Memory usage
-//!
-//! Bitsets of small enough size are stored inline using a single `usize`, and otherwise are
-//! allocated on the heap.
-//!
-//! | Target Pointer Size | [`size_of::<SmolBitSet>`] | Inline Capacity | Max Heap Capacity |
-//! |--------------------:|--------------------------:|----------------:|------------------:|
-//! | 32 bits             | 4 bytes                   | 30 bits         | 2^36 bits         |
-//! | 64 bits             | 8 bytes                   | 62 bits         | 2^68 bits         |
-//!
-//! Furthermore, [`SmolBitSet`] has a niche optimization so [`Option<SmolBitSet>`] has the same size
-//! as [`SmolBitSet`].
-//!
-//! ## Limitations
-//!
-//! * [`SmolBitSet`] does not implement [`Copy`].
-//! * Implementing [`core::ops::Not`] is also not possible (or rather complex).\
-//!   Related alternative methods are provided via [`SmolBitSet::and_not`] and [`SmolBitSet::and_not_assign`].
-//!
 //! # Example
 //!
 //! ```
@@ -45,6 +21,68 @@
 //! sbs <<= 64u16;
 //! assert_eq!(sbs, SmolBitSet::from_bits(&(64..128).collect::<Box<[_]>>()))
 //! ```
+//!
+//! # Const support
+//!
+//! Constructing a [`SmolBitSet`] in a `const` context is supported in the following ways:
+//! 1. If the value has multiple set bits, call [`SmolBitSet::new_inline`].
+//! 2. If the value has only a single set bit (i.e. it represents a flag), [`SmolBitSet::flag`] is
+//!    recommended.
+//!
+//! # Memory layout
+//!
+//! Bitsets of small enough size are stored inline on the stack using a single `usize`, with the two
+//! least-significant bits being used as metadata, like so:
+//!
+//! ```text
+//!  field size = `usize::BITS` - 2
+//!                     |
+//!                     v
+//! +----------------------+------+
+//! |                 data | 0b01 | <--- metadata header
+//! +----------------------+------+
+//! ```
+//!
+//! Bitsets created using [`SmolBitSet::flag`] are also stored inline, but with different metadata
+//! to signify a "sparse" representation:
+//!
+//! ```text
+//!       represents `1 << flag`
+//!                     |
+//!                     v
+//! +----------------------+------+
+//! |                 flag | 0b11 | <--- metadata header
+//! +----------------------+------+
+//! ```
+//!
+//! Otherwise, bitsets which are too large to fit inline are allocated on the heap as a dynamic
+//! array of `usize` elements, like so:
+//!
+//! ```text
+//! +------+
+//! |  ptr | <--- Guaranteed to be at least 32-bit aligned (i.e. metadata bits are 0b00)
+//! +------+
+//!     |
+//!     v
+//!   size        elements
+//! +------+------+------+------+
+//! |    3 |   b1 |   b2 |   b3 |
+//! +------+------+------+------+
+//! ```
+//!
+//! As such, a [`SmolBitSet`] has the same size as a `usize`, and additionally has a niche
+//! optimization so that [`Option<SmolBitSet>`] is also the same size:
+//!
+//! | Target Pointer Size | [`size_of::<SmolBitSet>`] | Inline Capacity | Max Heap Capacity |
+//! |--------------------:|--------------------------:|----------------:|------------------:|
+//! | 32 bits             | 4 bytes                   | 30 bits         | 2^36 bits         |
+//! | 64 bits             | 8 bytes                   | 62 bits         | 2^68 bits         |
+//!
+//! # Limitations
+//!
+//! * [`SmolBitSet`] does not implement [`Copy`].
+//! * Implementing [`core::ops::Not`] is also not possible (or rather complex). Related alternative
+//!   methods are provided via [`SmolBitSet::and_not`] and [`SmolBitSet::and_not_assign`].
 //!
 //! # Minimum Supported Rust Version
 //!
