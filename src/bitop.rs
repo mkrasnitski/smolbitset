@@ -1,157 +1,153 @@
 use crate::{BITS, Representation, SmolBitSet};
 
 use core::iter;
-use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
+use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign};
 
-macro_rules! shortening_bitop_fn_body {
-    ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:expr, $self_op:ident) => {
-        match ($lhs.representation(), $rhs.representation()) {
-            (Representation::Sparse, Representation::Sparse) => unsafe {
-                let lhs_flag = $lhs.get_sparse_data_unchecked();
-                let rhs_flag = $rhs.get_sparse_data_unchecked();
+impl SmolBitSet {
+    fn shortening_bitop_assign(
+        &mut self,
+        other: &Self,
+        mut op: impl FnMut(&mut usize, usize),
+        sparse_cond: impl Fn(usize, usize) -> bool,
+    ) {
+        match (self.representation(), other.representation()) {
+            (Representation::Sparse, Representation::Sparse) => {
+                let flag = unsafe { self.get_sparse_data_unchecked() };
+                let other_flag = unsafe { other.get_sparse_data_unchecked() };
 
-                if $sparse_cond(lhs_flag, rhs_flag) {
+                if sparse_cond(flag, other_flag) {
                     // result is still sparse and lhs already has the correct flag set
                 } else {
                     // result is an empty set
-                    *$lhs = Self::empty();
+                    self.clear();
                 }
-            },
+            }
             (Representation::Sparse, Representation::Inline | Representation::Alloc) => {
-                let lhs_flag = unsafe { $lhs.get_sparse_data_unchecked() };
-                let target_elem = lhs_flag / BITS;
-                let target_shift = lhs_flag % BITS;
+                let flag = unsafe { self.get_sparse_data_unchecked() };
+                let target_elem = flag / BITS;
+                let target_shift = flag % BITS;
 
-                let rhs_slice = $rhs.data();
-                let rhs_elem = rhs_slice.iter().nth(target_elem).unwrap_or(&0);
-                let rhs_flag = ((rhs_elem >> target_shift) & 1) * lhs_flag;
+                let other_elem = other.data().get(target_elem).copied().unwrap_or_default();
+                let other_flag = ((other_elem >> target_shift) & 1) * flag;
 
-                if $sparse_cond(lhs_flag, rhs_flag) {
+                if sparse_cond(flag, other_flag) {
                     // result is still sparse and lhs already has the correct flag set
                 } else {
                     // result is an empty set
-                    *$lhs = Self::empty();
+                    self.clear();
                 }
             }
             (Representation::Inline | Representation::Alloc, Representation::Sparse) => {
-                let rhs_flag = unsafe { $rhs.get_sparse_data_unchecked() };
-                let target_elem = rhs_flag / BITS;
-                let target_shift = rhs_flag % BITS;
+                let other_flag = unsafe { other.get_sparse_data_unchecked() };
+                let target_elem = other_flag / BITS;
+                let target_shift = other_flag % BITS;
 
-                let lhs_slice = $lhs.data();
-                let lhs_elem = lhs_slice.iter().nth(target_elem).unwrap_or(&0);
-                let lhs_flag = ((lhs_elem >> target_shift) & 1) * rhs_flag;
+                let elem = self.data().get(target_elem).copied().unwrap_or_default();
+                let flag = ((elem >> target_shift) & 1) * other_flag;
 
-                // TODO: clean up the duplication & possibly simplify conditions
-                if $sparse_cond(lhs_flag, rhs_flag) {
-                    if lhs_flag == rhs_flag {
-                        // result is sparse and lhs needs to be updated
-                        *$lhs = Self::flag(rhs_flag);
-                    } else {
+                match (sparse_cond(flag, other_flag), flag == other_flag) {
+                    (true, true) => self.clone_from(other), // result is sparse and lhs needs to be updated
+                    (false, false) => self.clear(),         // result is an empty set
+                    (true, false) | (false, true) => {
                         // result is not sparse, rhs_flag bit needs to be unset in lhs
-                        $lhs.and_not_assign(&(Self::new_inline(1) << rhs_flag));
-                    }
-                } else {
-                    if lhs_flag != rhs_flag {
-                        // result is an empty set
-                        *$lhs = Self::empty();
-                    } else {
-                        // result is not sparse, rhs_flag bit needs to be unsed in lhs
-                        $lhs.and_not_assign(&(Self::new_inline(1) << rhs_flag));
+                        self.and_not_assign(&(Self::new_inline(1) << other_flag));
                     }
                 }
             }
-            (Representation::Inline, Representation::Inline | Representation::Alloc) => unsafe {
-                let mut lhs = $lhs.get_inline_data_unchecked();
-                let rhs = $rhs.data()[0];
-                $opa(&mut lhs, rhs);
-                $lhs.write_inline_data_unchecked(lhs);
-            },
+            (Representation::Inline, Representation::Inline | Representation::Alloc) => {
+                let mut lhs = unsafe { self.get_inline_data_unchecked() };
+                let rhs = other.data()[0];
+                op(&mut lhs, rhs);
+                unsafe { self.write_inline_data_unchecked(lhs) }
+            }
             (Representation::Alloc, Representation::Alloc) => {
-                let lhs = unsafe { $lhs.as_slice_mut_unchecked() };
-                let rhs = unsafe { $rhs.as_slice_unchecked() };
+                let lhs = unsafe { self.as_slice_mut_unchecked() };
+                let rhs = unsafe { other.as_slice_unchecked() };
 
                 // in case lhs > rhs we need to have extra elements
                 let rhs_iter = rhs.iter().chain(iter::repeat(&0));
 
                 for (lhs, rhs) in lhs.iter_mut().zip(rhs_iter) {
-                    $opa(lhs, *rhs);
+                    op(lhs, *rhs);
                 }
             }
             (Representation::Alloc, Representation::Inline) => {
-                let lhs = unsafe { $lhs.as_slice_mut_unchecked() };
-                let rhs = unsafe { $rhs.get_inline_data_unchecked() };
+                let lhs = unsafe { self.as_slice_mut_unchecked() };
+                let rhs = unsafe { other.get_inline_data_unchecked() };
 
                 lhs.iter_mut().enumerate().for_each(|(idx, lhs)| {
-                    $opa(lhs, rhs.checked_shr((idx * BITS) as u32).unwrap_or(0));
+                    op(lhs, rhs.checked_shr((idx * BITS) as u32).unwrap_or(0));
                 });
             }
         }
-    };
-}
+    }
 
-macro_rules! extending_bitop_fn_body {
-    ($lhs:ident, $rhs:ident, $opa:path, $sparse_cond:expr, $self_op:ident) => {
-        match ($lhs.representation(), $rhs.representation()) {
-            (Representation::Sparse, Representation::Sparse) => unsafe {
-                let lhs_flag = $lhs.get_sparse_data_unchecked();
-                let rhs_flag = $rhs.get_sparse_data_unchecked();
+    fn extending_bitop_assign(
+        &mut self,
+        other: &Self,
+        mut op: impl FnMut(&mut usize, usize),
+        sparse_cond: impl Fn(usize, usize) -> bool,
+    ) {
+        match (self.representation(), other.representation()) {
+            (Representation::Sparse, Representation::Sparse) => {
+                let flag = unsafe { self.get_sparse_data_unchecked() };
+                let other_flag = unsafe { other.get_sparse_data_unchecked() };
 
-                if $sparse_cond(lhs_flag, rhs_flag) {
-                    if lhs_flag == rhs_flag {
+                if sparse_cond(flag, other_flag) {
+                    if flag == other_flag {
                         // result is still sparse and lhs is already correct
                     } else {
                         // result is not sparse, must contain both flags
-                        let mut res = $lhs.normalize();
-                        $opa(&mut res, $rhs.normalize());
-                        *$lhs = res;
+                        let mut res = self.normalize();
+                        res.extending_bitop_assign(&other.normalize(), op, sparse_cond);
+                        *self = res;
                     }
                 } else {
                     // result is an empty set
-                    *$lhs = Self::empty();
+                    self.clear();
                 }
-            },
+            }
             (Representation::Sparse, Representation::Inline | Representation::Alloc) => {
-                let mut lhs_normalized = $lhs.normalize();
-                Self::$self_op(&mut lhs_normalized, $rhs);
-                *$lhs = lhs_normalized;
+                let mut normalized = self.normalize();
+                normalized.extending_bitop_assign(other, op, sparse_cond);
+                *self = normalized;
             }
             (Representation::Inline | Representation::Alloc, Representation::Sparse) => {
-                Self::$self_op($lhs, $rhs.normalize());
+                self.extending_bitop_assign(&other.normalize(), op, sparse_cond);
             }
-            (Representation::Inline, Representation::Inline) => unsafe {
-                let mut lhs = $lhs.get_inline_data_unchecked();
-                let rhs = $rhs.get_inline_data_unchecked();
-                $opa(&mut lhs, rhs);
-                $lhs.write_inline_data_unchecked(lhs);
-            },
+            (Representation::Inline, Representation::Inline) => {
+                let mut lhs = unsafe { self.get_inline_data_unchecked() };
+                let rhs = unsafe { other.get_inline_data_unchecked() };
+                op(&mut lhs, rhs);
+                unsafe { self.write_inline_data_unchecked(lhs) };
+            }
             (Representation::Inline | Representation::Alloc, Representation::Alloc) => {
-                let rhs_hb = $rhs.len();
-                let lhs_hb = $lhs.len();
+                let rhs_hb = other.len();
+                let lhs_hb = self.len();
                 if rhs_hb > lhs_hb {
-                    $lhs.reserve(rhs_hb - lhs_hb);
+                    self.reserve(rhs_hb - lhs_hb);
                 }
 
-                let lhs = unsafe { $lhs.as_slice_mut_unchecked() };
-                let rhs = unsafe { $rhs.as_slice_unchecked() };
+                let lhs = unsafe { self.as_slice_mut_unchecked() };
+                let rhs = unsafe { other.as_slice_unchecked() };
 
                 // in case lhs > rhs we need to have extra elements
                 let rhs_iter = rhs.iter().chain(iter::repeat(&0));
 
                 for (lhs, rhs) in lhs.iter_mut().zip(rhs_iter) {
-                    $opa(lhs, *rhs);
+                    op(lhs, *rhs);
                 }
             }
             (Representation::Alloc, Representation::Inline) => {
-                let lhs = unsafe { $lhs.as_slice_mut_unchecked() };
-                let rhs = unsafe { $rhs.get_inline_data_unchecked() };
+                let lhs = unsafe { self.as_slice_mut_unchecked() };
+                let rhs = unsafe { other.get_inline_data_unchecked() };
 
                 if let Some(lhs) = lhs.iter_mut().next() {
-                    $opa(lhs, rhs)
+                    op(lhs, rhs);
                 }
             }
         }
-    };
+    }
 }
 
 macro_rules! impl_bitop {
@@ -187,23 +183,16 @@ macro_rules! impl_bitop {
 
         impl $OPA<&Self> for SmolBitSet {
             fn $opa(&mut self, rhs: &Self) {
-                fn op<T>(lhs: &mut T, rhs: T)
-                where
-                    T: $OPA<T>
-                {
-                    (*lhs).$opa(rhs);
-                }
-
-                $body_macro!(self, rhs, op, $sparse_cond, $opa);
+                $body_macro(self, rhs, |lhs, rhs| lhs.$opa(rhs), $sparse_cond);
             }
         }
     )*};
 }
 
 impl_bitop! {
-    BitOr::bitor, BitOrAssign::bitor_assign, |_, _| true, extending_bitop_fn_body;
-    BitAnd::bitand, BitAndAssign::bitand_assign, |lhs, rhs| lhs == rhs, shortening_bitop_fn_body;
-    BitXor::bitxor, BitXorAssign::bitxor_assign, |lhs, rhs| lhs != rhs, extending_bitop_fn_body;
+    BitOr::bitor, BitOrAssign::bitor_assign, |_, _| true, SmolBitSet::extending_bitop_assign;
+    BitAnd::bitand, BitAndAssign::bitand_assign, |lhs, rhs| lhs == rhs, SmolBitSet::shortening_bitop_assign;
+    BitXor::bitxor, BitXorAssign::bitxor_assign, |lhs, rhs| lhs != rhs, SmolBitSet::extending_bitop_assign;
 }
 
 macro_rules! impl_bitop_prim {
@@ -267,14 +256,7 @@ impl SmolBitSet {
     ///
     /// This is equivalent to `*self &= !rhs` with integers.
     pub fn and_not_assign(&mut self, rhs: &Self) {
-        fn op<T>(lhs: &mut T, rhs: T)
-        where
-            T: BitAndAssign + Not<Output = T>,
-        {
-            *lhs &= !rhs;
-        }
-
-        shortening_bitop_fn_body!(self, rhs, op, |lhs, rhs| lhs != rhs, and_not_assign);
+        self.shortening_bitop_assign(rhs, |lhs, rhs| *lhs &= !rhs, |lhs, rhs| lhs != rhs);
     }
 }
 

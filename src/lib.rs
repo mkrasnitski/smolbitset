@@ -287,6 +287,35 @@ impl SmolBitSet {
         res
     }
 
+    /// Clears the bitset, setting all bits to 0.
+    ///
+    /// Note that this has no effect on the allocated capacity of the bitset.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use smolbitset::SmolBitSet;
+    /// let mut sbs = SmolBitSet::new_inline(0b1010_0101);
+    /// sbs.clear();
+    /// assert!(sbs.is_empty());
+    /// ```
+    ///
+    /// ```
+    /// # use smolbitset::SmolBitSet;
+    /// let mut sbs = SmolBitSet::new_inline(0b1010_0101) << 64usize;
+    /// sbs.clear();
+    /// assert_eq!(sbs.capacity(), 128);
+    /// assert!(sbs.is_empty());
+    /// ```
+    pub fn clear(&mut self) {
+        if self.is_inline() {
+            *self = Self::empty();
+        } else {
+            let data = unsafe { self.as_slice_mut_unchecked() };
+            data.fill(0);
+        }
+    }
+
     #[inline]
     fn representation(&self) -> Representation {
         match self.ptr.addr().get() & 0b11 {

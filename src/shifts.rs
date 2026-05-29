@@ -77,7 +77,7 @@ impl SmolBitSet {
                 },
                 None => {
                     // bitset is now empty, switching to non-sparse inline representation
-                    *self = Self::empty();
+                    self.clear();
                 }
             }
 
