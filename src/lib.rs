@@ -517,49 +517,43 @@ impl SmolBitSet {
             let new_size = new_capacity.div_ceil(BITS);
             let new_layout = create_layout(new_size);
 
-            let ptr = if self.is_inline() {
-                // Create a new allocation and then copy data over
-                #[expect(clippy::cast_ptr_alignment)]
+            #[expect(clippy::cast_ptr_alignment)]
+            let (ptr, current_size) = if self.is_inline() {
+                // Create a new allocation
                 let ptr = unsafe { alloc::alloc(new_layout).cast::<usize>() };
-                if ptr.is_null() {
-                    handle_alloc_error(new_layout);
-                }
-
-                unsafe {
-                    // Store the size in the first element
-                    *ptr = new_size;
-                    // Store inline data in the next element
-                    *ptr.add(1) = self.get_inline_data_unchecked();
-                    // Fill the rest with zeros
-                    slice::from_raw_parts_mut(ptr.add(2), new_size - 1).fill(0);
-                }
-                ptr
+                (ptr, 0)
             } else {
+                // Reallocate the current data into a larger buffer
                 let current_size = unsafe { self.alloc_size_unchecked() };
                 debug_assert!(new_size >= current_size);
 
-                // Reallocate the current data into a larger buffer
                 let current_layout = create_layout(current_size);
-                #[expect(clippy::cast_ptr_alignment)]
                 let ptr = unsafe {
                     alloc::realloc(self.ptr.as_ptr().cast(), current_layout, new_layout.size())
                         .cast::<usize>()
                 };
-                if ptr.is_null() {
-                    handle_alloc_error(new_layout);
-                }
-
-                unsafe {
-                    // Update the new size in the first element
-                    *ptr = new_size;
-                    // Initialize newly allocated memory to zero
-                    slice::from_raw_parts_mut(ptr.add(1 + current_size), new_size - current_size)
-                        .fill(0);
-                }
-                ptr
+                (ptr, current_size)
             };
 
-            self.ptr = unsafe { NonNull::new_unchecked(ptr) };
+            if ptr.is_null() {
+                handle_alloc_error(new_layout);
+            }
+
+            unsafe {
+                // Store the size in the first element
+                *ptr = new_size;
+
+                // Initialize any newly allocated memory to zero
+                slice::from_raw_parts_mut(ptr.add(1 + current_size), new_size - current_size)
+                    .fill(0);
+
+                if self.is_inline() {
+                    // Copy inline data over to the new allocation
+                    *ptr.add(1) = self.get_inline_data_unchecked();
+                }
+
+                self.ptr = NonNull::new_unchecked(ptr);
+            }
         }
     }
 }
