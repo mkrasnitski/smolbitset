@@ -427,7 +427,7 @@ impl SmolBitSet {
         }
     }
 
-    /// Returns the number of bits in the bitset, not counting leading zeros.
+    /// Returns the minimum number of bits required to represent the bitset.
     ///
     /// # Examples
     ///
